@@ -36,6 +36,100 @@
 	<version>Version</version>
 </app_context>
 
+<common>
+	<cancel>Annuler</cancel>
+	<delete>Supprimer</delete>
+	<file_corrupted>Le fichier est corrompu.</file_corrupted>
+	<no>Non</no>
+	<select_all>Sélectionner tout</select_all>
+	<select>Sélectionner</select>
+	<please_wait>Merci de patienter...</please_wait>
+	<yes>Oui</yes>
+	<wday>
+		<day>dimanche</day>
+		<day>lundi</day>
+		<day>mardi</day>
+		<day>mercredi</day>
+		<day>jeudi</day>
+		<day>vendredi</day>
+		<day>samedi</day>
+	</wday>
+	<ymonth>
+		<month>Janvier</month>
+		<month>Février</month>
+		<month>Mars</month>
+		<month>Avril</month>
+		<month>Mai</month>
+		<month>Juin</month>
+		<month>Juillet</month>
+		<month>Août</month>
+		<month>Septembre</month>
+		<month>Octobre</month>
+		<month>Novembre</month>
+		<month>Décembre</month>
+	</ymonth>
+	<small_ymonth>
+		<month>janvier</month>
+		<month>février</month>
+		<month>mars</month>
+		<month>avril</month>
+		<month>mai</month>
+		<month>juin</month>
+		<month>juillet</month>
+		<month>août</month>
+		<month>septembre</month>
+		<month>octobre</month>
+		<month>novembre</month>
+		<month>décembre</month>
+	</small_ymonth>
+	<hidden_trophy>Trophée masqué</hidden_trophy>
+	<one_hour_ago>Il y a 1 heure</one_hour_ago>
+	<one_minute_ago>Il y a 1 minute</one_minute_ago>
+	<bronze>Bronze</bronze>
+	<gold>Or</gold>
+	<platinum>Platine</platinum>
+	<silver>Argent</silver>
+	<hours_ago>Il y a {} heures</hours_ago>
+	<minutes_ago>Il y a {} minutes</minutes_ago>
+</common>
+
+<dialog>
+	<trophy>
+		<preparing_start_app>Préparation au lancement de l'application...</preparing_start_app>
+	</trophy>
+	<save_data>
+		<delete>
+			<cancel_deleting>Annuler la suppression ?</cancel_deleting> 
+			<deletion_complete>Suppression terminée.</deletion_complete> 
+			<delete_saved_data>Supprimer ces données sauvegardées ?</delete_saved_data> 
+		</delete>
+		<info>
+			<details>Détails</details>
+			<updated>Mis à jour</updated>
+		</info>
+		<load name="Charger">
+			<cancel_loading>Annuler le chargement ?</cancel_loading>
+			<no_saved_data>Aucune donnée sauvegardée.</no_saved_data>
+			<load_complete>Chargement terminé.</load_complete>
+			<loading>Chargement en cours...</loading>
+			<load_saved_data>Charger ces données sauvegardées ?</load_saved_data>
+		</load>
+		<save name="Sauvegarder">
+			<cancel_saving>Annuler la sauvegarde ?</cancel_saving>
+			<could_not_save>La sauvegarde du fichier a échoué.
+Espace libre insuffisant sur la carte mémoire.</could_not_save>
+			<not_free_space>Espace libre insuffisant sur la carte mémoire.</not_free_space>
+			<new_saved_data>Nouvelles données sauvegardées</new_saved_data>
+			<saving_complete>Sauvegarde terminée.</saving_complete>
+			<save_the_data>Sauvegarder les données ?</save_the_data>
+			<saving>Sauvegarde en cours...</saving>
+			<warning_saving>Sauvegarde en cours...
+Ne pas éteindre le système, ni fermer l'application.</warning_saving>
+			<overwrite_saved_data>Écraser ces données sauvegardées ?</overwrite_saved_data>
+		</save>
+	</save_data>
+</dialog>
+
 <indicator>
 	<app_added_home>L'application a été ajoutée à l'écran d'accueil.</app_added_home>
 	<delete_all>Supprimer tout</delete_all>
@@ -85,6 +179,21 @@
 	</language>
 </settings>
 
+<trophy_collection>
+	<details>Détails</details>
+	<earned>Obtenu</earned>
+	<name>Nom</name>
+	<no_trophies>Aucun trophée.
+Pour obtenir des trophées, utilisez une application compatible avec cette fonctionnalité.</no_trophies>
+	<not_earned>Pas obtenu</not_earned>
+	<original>Original</original>
+	<sort>Trier</sort>
+	<trophies>Trophées</trophies>
+	<grade>Rang</grade>
+	<progress>Progression</progress>
+	<updated>Mis à jour</updated>
+</trophy_collection>
+
 <user_management>
 	<create_user>Créer un utilisateur</create_user>
 	<edit_user>Modifier un utilisateur</edit_user>
@@ -94,30 +203,3 @@
 	<user>Utilisateur</user>
 	<confirm>Confirmer</confirm>
 </user_management>
-
-<start>
-	<wday>
-		<day>Dimanche</day>
-		<day>Lundi</day>
-		<day>Mardi</day>
-		<day>Mercredi</day>
-		<day>Jeudi</day>
-		<day>Vendredi</day>
-		<day>Samedi</day>
-	</wday>
-
-	<ymonth>
-		<month>Janvier</month>
-		<month>Février</month>
-		<month>Mars</month>
-		<month>Avril</month>
-		<month>Mai</month>
-		<month>Juin</month>
-		<month>Juillet</month>
-		<month>Août</month>
-		<month>Septembre</month>
-		<month>Octobre</month>
-		<month>Novembre</month>
-		<month>Décembre</month>
-	</ymonth>
-</start>

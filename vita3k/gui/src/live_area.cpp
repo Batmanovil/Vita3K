@@ -19,6 +19,8 @@
 
 #include <gui/functions.h>
 
+#include <kernel/functions.h>
+
 #include <util/safe_time.h>
 
 #include <io/VitaIoDevice.h>
@@ -129,6 +131,87 @@ void init_lang(GuiState &gui, HostState &host) {
                 lang_app_context["version"] = app_context.child("version").text().as_string();
             }
 
+            // Common
+            if (!lang_xml.child("common").empty()) {
+                const auto common = lang_xml.child("common");
+                auto &common_dialog = host.common_dialog.lang.common;
+                common_dialog["cancel"] = common.child("cancel").text().as_string();
+                common_dialog["delete"] = common.child("delete").text().as_string();
+                common_dialog["file_corrupted"] = common.child("file_corrupted").text().as_string();
+                common_dialog["no"] = common.child("no").text().as_string();
+                common_dialog["select_all"] = common.child("select_all").text().as_string();
+                common_dialog["select"] = common.child("select").text().as_string();
+                common_dialog["please_wait"] = common.child("please_wait").text().as_string();
+                common_dialog["yes"] = common.child("yes").text().as_string();
+                auto &lang_common = gui.lang.common;
+                if (!common.child("wday").empty()) {
+                    for (const auto &day : common.child("wday"))
+                        lang_common.wday.push_back(day.text().as_string());
+                }
+                if (!common.child("ymonth").empty()) {
+                    for (const auto &month : common.child("ymonth"))
+                        lang_common.ymonth.push_back(month.text().as_string());
+                }
+                if (!common.child("small_ymonth").empty()) {
+                    for (const auto &month : common.child("small_ymonth"))
+                        lang_common.small_ymonth.push_back(month.text().as_string());
+                }
+                lang_common.common["hidden_trophy"] = common.child("hidden_trophy").text().as_string();
+                lang_common.common["one_hour_ago"] = common.child("one_hour_ago").text().as_string();
+                lang_common.common["one_minute_ago"] = common.child("one_minute_ago").text().as_string();
+                lang_common.common["bronze"] = common.child("bronze").text().as_string();
+                lang_common.common["gold"] = common.child("gold").text().as_string();
+                lang_common.common["platinum"] = common.child("platinum").text().as_string();
+                lang_common.common["silver"] = common.child("silver").text().as_string();
+                lang_common.common["hours_ago"] = common.child("hours_ago").text().as_string();
+                lang_common.common["minutes_ago"] = common.child("minutes_ago").text().as_string();
+            }
+
+            // Dialog
+            if (!lang_xml.child("dialog").empty()) {
+                const auto dialog = lang_xml.child("dialog");
+                // Trophy
+                if (!dialog.child("trophy").empty())
+                    host.common_dialog.lang.trophy["preparing_start_app"] = dialog.child("trophy").child("preparing_start_app").text().as_string();
+                // Save Data
+                if (!dialog.child("save_data").empty()) {
+                    auto &lang_save_data = host.common_dialog.lang.save_data;
+                    const auto save_data = dialog.child("save_data");
+                    if (!save_data.child("delete").empty()) {
+                        const auto delete_child = save_data.child("delete");
+                        lang_save_data["cancel_deleting"] = delete_child.child("cancel_deleting").text().as_string();
+                        lang_save_data["deletion_complete"] = delete_child.child("deletion_complete").text().as_string();
+                        lang_save_data["delete_saved_data"] = delete_child.child("delete_saved_data").text().as_string();
+                    }
+                    if (!save_data.child("info").empty()) {
+                        lang_save_data["details"] = save_data.child("info").child("details").text().as_string();
+                        lang_save_data["updated"] = save_data.child("info").child("updated").text().as_string();
+                    }
+                    if (!save_data.child("load").empty()) {
+                        const auto load = save_data.child("load");
+                        lang_save_data["load"] = load.attribute("name").as_string();
+                        lang_save_data["cancel_loading"] = load.child("cancel_loading").text().as_string();
+                        lang_save_data["no_saved_data"] = load.child("no_saved_data").text().as_string();
+                        lang_save_data["load_complete"] = load.child("load_complete").text().as_string();
+                        lang_save_data["loading"] = load.child("loading").text().as_string();
+                        lang_save_data["load_saved_data"] = load.child("load_saved_data").text().as_string();
+                    }
+                    if (!save_data.child("save").empty()) {
+                        const auto save = save_data.child("save");
+                        lang_save_data["save"] = save.attribute("name").as_string();
+                        lang_save_data["cancel_saving"] = save.child("cancel_saving").text().as_string();
+                        lang_save_data["could_not_save"] = save.child("could_not_save").text().as_string();
+                        lang_save_data["not_free_space"] = save.child("not_free_space").text().as_string();
+                        lang_save_data["new_saved_data"] = save.child("new_saved_data").text().as_string();
+                        lang_save_data["saving_complete"] = save.child("saving_complete").text().as_string();
+                        lang_save_data["save_the_data"] = save.child("save_the_data").text().as_string();
+                        lang_save_data["saving"] = save.child("saving").text().as_string();
+                        lang_save_data["warning_saving"] = save.child("warning_saving").text().as_string();
+                        lang_save_data["overwrite_saved_data"] = save.child("overwrite_saved_data").text().as_string();
+                    }
+                }
+            }
+
             // Indicator
             if (!lang_xml.child("indicator").empty()) {
                 auto &lang_indicator = gui.lang.indicator;
@@ -202,6 +285,23 @@ void init_lang(GuiState &gui, HostState &host) {
                 lang_settings["system_language"] = settings.child("language").child("system_language").text().as_string();
             }
 
+            // Trophy Collection
+            if (!lang_xml.child("trophy_collection").empty()) {
+                const auto trophy_collection = lang_xml.child("trophy_collection");
+                auto &lang_trophy_collection = gui.lang.trophy_collection;
+                lang_trophy_collection["details"] = trophy_collection.child("details").text().as_string();
+                lang_trophy_collection["earned"] = trophy_collection.child("earned").text().as_string();
+                lang_trophy_collection["name"] = trophy_collection.child("name").text().as_string();
+                lang_trophy_collection["no_trophies"] = trophy_collection.child("no_trophies").text().as_string();
+                lang_trophy_collection["not_earned"] = trophy_collection.child("not_earned").text().as_string();
+                lang_trophy_collection["original"] = trophy_collection.child("original").text().as_string();
+                lang_trophy_collection["sort"] = trophy_collection.child("sort").text().as_string();
+                lang_trophy_collection["trophies"] = trophy_collection.child("trophies").text().as_string();
+                lang_trophy_collection["grade"] = trophy_collection.child("grade").text().as_string();
+                lang_trophy_collection["progress"] = trophy_collection.child("progress").text().as_string();
+                lang_trophy_collection["updated"] = trophy_collection.child("updated").text().as_string();
+            }
+
             // User Management
             const auto user_management = lang_xml.child("user_management");
             if (!user_management.empty()) {
@@ -213,15 +313,6 @@ void init_lang(GuiState &gui, HostState &host) {
                 lang_user_management["name"] = user_management.child("name").text().as_string();
                 lang_user_management["user"] = user_management.child("user").text().as_string();
                 lang_user_management["confirm"] = user_management.child("confirm").text().as_string();
-            }
-
-            // Start Screen
-            const auto start = lang_xml.child("start");
-            if (!start.empty()) {
-                for (const auto &day : start.child("wday"))
-                    gui.lang.wday.push_back(day.text().as_string());
-                for (const auto &month : start.child("ymonth"))
-                    gui.lang.ymonth.push_back(month.text().as_string());
             }
         } else
             LOG_ERROR("Error open lang file xml: {}", lang_xml_path);
@@ -235,231 +326,6 @@ void init_lang(GuiState &gui, HostState &host) {
 
 bool get_live_area_sys_app_state(GuiState &gui) {
     return !gui.live_area.content_manager && !gui.live_area.settings && !gui.live_area.trophy_collection && !gui.live_area.manual && !gui.live_area.user_management;
-}
-
-static bool notice_info;
-static void draw_notice_info(GuiState &gui, HostState &host) {
-    const auto display_size = ImGui::GetIO().DisplaySize;
-    const auto SCAL = ImVec2(display_size.x / 960.0f, display_size.y / 544.0f);
-    const auto NOTICE_SIZE = gui.notice_info_count_new ? ImVec2(104.0f * SCAL.x, 95.0f * SCAL.y) : ImVec2(90.0f * SCAL.x, 82.0f * SCAL.y);
-    const auto NOTICE_POS = ImVec2(display_size.x - NOTICE_SIZE.x, 0.f);
-    const ImU32 NOTICE_COLOR = 4294967295; // White
-    const auto WINDOW_SIZE = notice_info ? display_size : gui.notice_info_count_new ? ImVec2(84.f * SCAL.x, 76.f * SCAL.y) : ImVec2(72.f * SCAL.x, 62.f * SCAL.y);
-    const auto WINDOW_POS = ImVec2(notice_info ? 0.f : display_size.x - WINDOW_SIZE.x, 0.f);
-
-    ImGui::SetNextWindowPos(WINDOW_POS, ImGuiCond_Always);
-    ImGui::SetNextWindowSize(WINDOW_SIZE, ImGuiCond_Always);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 50.f * SCAL.x);
-    ImGui::Begin("##notice_info", nullptr, ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings);
-    ImGui::PopStyleVar();
-    if (gui.notice_info_count_new) {
-        if (gui.theme_information_bar_notice.find("new") != gui.theme_information_bar_notice.end())
-            ImGui::GetForegroundDrawList()->AddImage(gui.theme_information_bar_notice["new"], NOTICE_POS, ImVec2(NOTICE_POS.x + NOTICE_SIZE.x, NOTICE_SIZE.y));
-        else
-            ImGui::GetForegroundDrawList()->AddRectFilled(ImVec2(display_size.x - (84.f * SCAL.x), (-40.f * SCAL.y)), ImVec2(display_size.x + (32.f * SCAL.y), 76.f * SCAL.y), IM_COL32(11.f, 90.f, 252.f, 255.f), 75.f * SCAL.x, ImDrawCornerFlags_All);
-        ImGui::GetForegroundDrawList()->AddText(gui.vita_font, 40.f * SCAL.x, ImVec2(display_size.x - (NOTICE_SIZE.x / 2.f) + (10.f * SCAL.x), (10.f * SCAL.y)), NOTICE_COLOR, std::to_string(gui.notice_info_count_new).c_str());
-    } else {
-        if (gui.theme_information_bar_notice.find("no") != gui.theme_information_bar_notice.end())
-            ImGui::GetForegroundDrawList()->AddImage(gui.theme_information_bar_notice["no"], NOTICE_POS, ImVec2(NOTICE_POS.x + NOTICE_SIZE.x, NOTICE_SIZE.y));
-        else
-            ImGui::GetForegroundDrawList()->AddRectFilled(ImVec2(display_size.x - (70.f * SCAL.x), (-24.f * SCAL.y)), ImVec2(display_size.x + (14.f * SCAL.y), 60.f * SCAL.y), IM_COL32(62.f, 98.f, 160.f, 255.f), 75.f * SCAL.x, ImDrawCornerFlags_All);
-    }
-
-    if (ImGui::IsWindowHovered(ImGuiHoveredFlags_RootWindow) && !ImGui::IsAnyItemHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-        if (notice_info) {
-            gui.notice_info_count_new = 0;
-            gui.notice_info_new.clear();
-        }
-        notice_info = !notice_info;
-    }
-
-    if (notice_info) {
-        const auto POPUP_SIZE = gui.notice_info.empty() ? ImVec2(412.f * SCAL.x, 86.f * SCAL.y) : ImVec2(782.f * SCAL.x, gui.notice_info.size() < 5 ? 22.f + ((80.f * SCAL.y) * gui.notice_info.size() + (10.f * (gui.notice_info.size() - 1))) : 464.f * SCAL.y);
-        const auto POPUP_POS = ImVec2(gui.notice_info.empty() ? display_size.x - (502.f * SCAL.y) : (display_size.x / 2.f) - (POPUP_SIZE.x / 2.f), 56.f * SCAL.y);
-        const auto POPUP_BG_COLOR = gui.notice_info.empty() ? GUI_COLOR_TEXT : GUI_SMOOTH_GRAY;
-
-        ImGui::PushStyleColor(ImGuiCol_ChildBg, POPUP_BG_COLOR);
-        ImGui::PushStyleColor(ImGuiCol_Border, GUI_COLOR_TEXT);
-        ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 10.f);
-        ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, gui.notice_info.empty() ? 0.f : 8.0f);
-        ImGui::SetNextWindowPos(POPUP_POS, ImGuiCond_Always);
-        ImGui::BeginChild("##notice_info_child", POPUP_SIZE, true, ImGuiWindowFlags_NoSavedSettings);
-        auto indicator = gui.lang.indicator;
-        if (gui.notice_info.empty()) {
-            ImGui::SetWindowFontScale(1.2f * SCAL.x);
-            const auto no_notif = !indicator["no_notif"].empty() ? indicator["no_notif"].c_str() : "There are no notifications";
-            const auto calc_text = ImGui::CalcTextSize(no_notif);
-            ImGui::SetCursorPos(ImVec2((POPUP_SIZE.x / 2.f) - (calc_text.x / 2.f), (POPUP_SIZE.y / 2.f) - (calc_text.y / 2.f)));
-            ImGui::TextColored(ImVec4(0.f, 0.f, 0.f, 1.f), "%s", no_notif);
-        } else {
-            ImGui::Columns(3, nullptr, false);
-            ImGui::SetColumnWidth(0, 85.f * SCAL.x);
-            ImGui::SetColumnWidth(1, 500.f * SCAL.x);
-            const auto ICON_SIZE = ImVec2(64.f * SCAL.x, 64.f * SCAL.y);
-            const auto SELECT_SIZE = ImVec2(POPUP_SIZE.x, 80.f * SCAL.y);
-
-            for (const auto &notice : gui.notice_info) {
-                tm updated_tm = {};
-
-                SAFE_LOCALTIME(&notice.date, &updated_tm);
-                const auto date = fmt::format("{}/{}/{} {:0>2d}:{:0>2d}",
-                    updated_tm.tm_mday, updated_tm.tm_mon + 1, updated_tm.tm_year + 1900, updated_tm.tm_hour, updated_tm.tm_min);
-                if (notice.pos < (gui.notice_info.size() - 1))
-                    ImGui::Separator();
-                const auto ICON_POS = ImGui::GetCursorPos();
-                if (gui.notice_info_icon.find(notice.pos) != gui.notice_info_icon.end()) {
-                    ImGui::SetCursorPos(ImVec2(ICON_POS.x + (ImGui::GetColumnWidth() / 2.f) - (ICON_SIZE.x / 2.f), ICON_POS.y + (SELECT_SIZE.y / 2.f) - (ICON_SIZE.y / 2.f)));
-                    ImGui::Image(gui.notice_info_icon[notice.pos], ICON_SIZE);
-                }
-                ImGui::SetCursorPosY(ICON_POS.y);
-                ImGui::PushID(std::to_string(notice.pos).c_str());
-                const auto SELECT_COLOR = ImVec4(0.23f, 0.68f, 0.95f, 0.60f);
-                const auto SELECT_COLOR_HOVERED = ImVec4(0.23f, 0.68f, 0.99f, 0.80f);
-                const auto SELECT_COLOR_ACTIVE = ImVec4(0.23f, 0.68f, 1.f, 1.f);
-                ImGui::PushStyleColor(ImGuiCol_Header, SELECT_COLOR);
-                ImGui::PushStyleColor(ImGuiCol_HeaderHovered, SELECT_COLOR_HOVERED);
-                ImGui::PushStyleColor(ImGuiCol_HeaderActive, SELECT_COLOR_ACTIVE);
-                if (ImGui::Selectable("##icon", gui.notice_info_new[notice.pos], host.io.app_path.empty() || ((notice.type == "content") && (notice.group == "theme")) || (notice.type == "trophy") ? ImGuiSelectableFlags_SpanAllColumns : ImGuiSelectableFlags_Disabled, SELECT_SIZE)) {
-                    gui.notice_info_count_new = 0;
-                    gui.notice_info_new.clear();
-                    if (notice.type == "content") {
-                        if (notice.group == "theme")
-                            pre_load_app(gui, host, false, "NPXS10015");
-                        else
-                            pre_load_app(gui, host, host.cfg.show_live_area_screen, notice.id);
-                    } else {
-                        pre_load_app(gui, host, false, "NPXS10008");
-                        open_trophy_unlocked(gui, host, notice.id, notice.group);
-                    }
-                    notice_info = false;
-                }
-                ImGui::PopStyleColor(3);
-                ImGui::PopID();
-                ImGui::NextColumn();
-                ImGui::SetWindowFontScale(1.3f * SCAL.x);
-                ImGui::SetCursorPosY(ImGui::GetCursorPosY() + (14.f * SCAL.y));
-                ImGui::TextColored(GUI_COLOR_TEXT, "%s", notice.name.c_str());
-                ImGui::Spacing();
-                ImGui::SetWindowFontScale(0.9f * SCAL.x);
-                ImGui::TextColored(GUI_COLOR_TEXT, "%s", notice.msg.c_str());
-                ImGui::NextColumn();
-                ImGui::SetCursorPosY(ImGui::GetCursorPosY() + (60.f * SCAL.y));
-                ImGui::TextColored(GUI_COLOR_TEXT, "%s", date.c_str());
-                ImGui::NextColumn();
-            }
-            ImGui::Columns(1);
-        }
-        ImGui::EndChild();
-        ImGui::PopStyleColor(2);
-        ImGui::PopStyleVar(2);
-
-        if (!gui.notice_info.empty()) {
-            const auto DELETE_POPUP_SIZE = ImVec2(756.0f * SCAL.x, 436.0f * SCAL.y);
-            const auto BUTTON_SIZE = ImVec2(320.f * SCAL.x, 46.f * SCAL.y);
-
-            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 10.f);
-            ImGui::SetCursorPos(ImVec2(display_size.x - (70.f * SCAL.x), display_size.y - (52.f * SCAL.y)));
-            if (ImGui::Button("...", ImVec2(64.f * SCAL.x, 40.f * SCAL.y)) || ImGui::IsKeyPressed(host.cfg.keyboard_button_triangle))
-                ImGui::OpenPopup("...");
-            if (ImGui::BeginPopup("...", ImGuiWindowFlags_NoMove)) {
-                if (ImGui::Button(!indicator["delete_all"].empty() ? indicator["delete_all"].c_str() : "Delete All"))
-                    ImGui::OpenPopup("Delete All");
-                ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 10.f);
-                ImGui::SetNextWindowSize(DELETE_POPUP_SIZE, ImGuiCond_Always);
-                ImGui::SetNextWindowPos(ImVec2((display_size.x / 2.f) - (DELETE_POPUP_SIZE.x / 2.f), (display_size.y / 2.f) - (DELETE_POPUP_SIZE.y / 2.f)));
-                if (ImGui::BeginPopupModal("Delete All", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings)) {
-                    ImGui::SetWindowFontScale(1.4f * SCAL.x);
-                    const auto notif_deleted = !indicator["notif_deleted"].empty() ? indicator["notif_deleted"].c_str() : "The notifications will be deleted.";
-                    ImGui::SetCursorPos(ImVec2((DELETE_POPUP_SIZE.x / 2.f) - (ImGui::CalcTextSize(notif_deleted).x / 2.f), (DELETE_POPUP_SIZE.y / 2.f) - (46.f * SCAL.y)));
-                    ImGui::TextColored(GUI_COLOR_TEXT, "%s", notif_deleted);
-                    ImGui::SetCursorPos(ImVec2((DELETE_POPUP_SIZE.x / 2) - (BUTTON_SIZE.x + (20.f * SCAL.x)), DELETE_POPUP_SIZE.y - BUTTON_SIZE.y - (24.0f * SCAL.y)));
-                    if (ImGui::Button("Cancel", BUTTON_SIZE) || ImGui::IsKeyPressed(host.cfg.keyboard_button_circle)) {
-                        ImGui::CloseCurrentPopup();
-                    }
-                    ImGui::SameLine(0.f, 20.f);
-                    if (ImGui::Button("Ok", BUTTON_SIZE) || ImGui::IsKeyPressed(host.cfg.keyboard_button_cross)) {
-                        gui.notice_info.clear();
-                        gui.notice_info_icon.clear();
-                        gui.notice_info_count_new = 0;
-                        notice_info = false;
-                        ImGui::CloseCurrentPopup();
-                    }
-                    ImGui::EndPopup();
-                }
-                ImGui::PopStyleVar();
-                ImGui::EndPopup();
-            }
-            ImGui::PopStyleVar();
-        }
-    }
-    ImGui::End();
-}
-
-void draw_information_bar(GuiState &gui, HostState &host) {
-    const auto display_size = ImGui::GetIO().DisplaySize;
-    const auto SCAL = ImVec2(display_size.x / 960.0f, display_size.y / 544.0f);
-    const auto MENUBAR_HEIGHT = 32.f * SCAL.y;
-    ImU32 DEFAULT_BAR_COLOR = 4278190080; // Black
-    ImU32 DEFAULT_INDICATOR_COLOR = 4294967295; // White
-    const auto is_notif_pos = !gui.live_area.start_screen && (gui.live_area.live_area_screen || gui.live_area.app_selector) ? 78.f * SCAL.x : 0.f;
-
-    const auto is_theme_color = gui.live_area.app_selector || gui.live_area.live_area_screen || gui.live_area.start_screen;
-
-    ImGui::SetNextWindowPos(ImVec2(0.f, 0.f), ImGuiCond_Always);
-    ImGui::SetNextWindowSize(ImVec2(display_size.x, MENUBAR_HEIGHT), ImGuiCond_Always);
-    ImGui::Begin("##information_bar", &gui.live_area.information_bar, ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings);
-
-    ImGui::GetForegroundDrawList()->AddRectFilled(ImVec2(0.f, 0.f), ImVec2(display_size.x, MENUBAR_HEIGHT), is_theme_color ? gui.information_bar_color["bar"] : DEFAULT_BAR_COLOR, 0.f, ImDrawCornerFlags_All);
-
-    if (gui.live_area.app_selector || gui.live_area.live_area_screen) {
-        const float decal_icon_pos = 38.f * ((float(gui.apps_list_opened.size()) - 1.f) / 2.f);
-        for (auto a = 0; a < gui.apps_list_opened.size(); a++) {
-            const auto icon_scal_pos = ImVec2((display_size.x / 2.f) - (16.f * SCAL.x) - (decal_icon_pos * SCAL.x) + (a * (38.f * SCAL.x)), display_size.y - (544.f * SCAL.y));
-            const auto icon_scal_size = ImVec2(icon_scal_pos.x + (32.0f * SCAL.x), icon_scal_pos.y + (32.f * SCAL.y));
-            if (get_app_icon(gui, gui.apps_list_opened[a])->first == gui.apps_list_opened[a])
-                ImGui::GetForegroundDrawList()->AddImageRounded(get_app_icon(gui, gui.apps_list_opened[a])->second, icon_scal_pos, icon_scal_size, ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE, 15.f, ImDrawCornerFlags_All);
-            else
-                ImGui::GetForegroundDrawList()->AddRectFilled(icon_scal_pos, icon_scal_size, IM_COL32_WHITE, 0.f, ImDrawCornerFlags_All);
-            if ((gui.current_app_selected < 0) || (gui.apps_list_opened[gui.current_app_selected] != gui.apps_list_opened[a]))
-                ImGui::GetForegroundDrawList()->AddRectFilled(icon_scal_pos, icon_scal_size, IM_COL32(0.f, 0.f, 0.f, 140.f), 15.f, ImDrawCornerFlags_All);
-        }
-    }
-
-    const auto SCAL_PIX_FONT = 19.2f / 24.f;
-    const auto scal_default_font = ImGui::GetFontSize() / 19.2f;
-    const auto scal_clock_default_font = 24.f * scal_default_font;
-    const auto scal_format_default_font = 18.f * scal_default_font;
-    const auto scal_clock_font_size = scal_clock_default_font / ImGui::GetFontSize();
-    const auto scal_format_font_size = scal_format_default_font / ImGui::GetFontSize();
-
-    const auto now = std::chrono::system_clock::now();
-    const auto tt = std::chrono::system_clock::to_time_t(now);
-
-    tm local = {};
-    SAFE_LOCALTIME(&tt, &local);
-
-    auto DATE_TIME = get_date_time(gui, host, local);
-    const auto CALC_CLOCK_SIZE = ImGui::CalcTextSize(DATE_TIME["clock"].c_str());
-    const auto SCAL_CLOCK_SIZE = ImVec2(CALC_CLOCK_SIZE.x * scal_clock_font_size, CALC_CLOCK_SIZE.y * scal_clock_font_size * SCAL_PIX_FONT);
-    const auto CALC_FORMAT_SIZE = ImGui::CalcTextSize(DATE_TIME["day-moment"].c_str());
-    const auto SCAL_FORMAT_SIZE = host.io.user_id.empty() || gui.users[host.io.user_id].clock_12_hour ? ImVec2((CALC_FORMAT_SIZE.x * scal_format_font_size), CALC_FORMAT_SIZE.y * scal_format_font_size * SCAL_PIX_FONT) : ImVec2(0.f, 0.f);
-
-    const auto CLOCK_POS = ImVec2(display_size.x - (62.f * SCAL.x) - (SCAL_CLOCK_SIZE.x * SCAL.x) - (SCAL_FORMAT_SIZE.x * SCAL.x) - is_notif_pos, (MENUBAR_HEIGHT / 2.f) - ((SCAL_CLOCK_SIZE.y * SCAL.y) / 2.f));
-    const auto FORMAT_POS = ImVec2(CLOCK_POS.x + (SCAL_CLOCK_SIZE.x * SCAL.x) + (4.f * SCAL.x), CLOCK_POS.y + (SCAL_CLOCK_SIZE.y - SCAL_FORMAT_SIZE.y));
-
-    ImGui::GetForegroundDrawList()->AddText(gui.vita_font, scal_clock_default_font * SCAL.x, CLOCK_POS, is_theme_color ? gui.information_bar_color["indicator"] : DEFAULT_INDICATOR_COLOR, DATE_TIME["clock"].c_str());
-    if (host.io.user_id.empty() || gui.users[host.io.user_id].clock_12_hour)
-        ImGui::GetForegroundDrawList()->AddText(gui.vita_font, scal_format_default_font * SCAL.x, FORMAT_POS, is_theme_color ? gui.information_bar_color["indicator"] : DEFAULT_INDICATOR_COLOR, DATE_TIME["day-moment"].c_str());
-    ImGui::GetForegroundDrawList()->AddRectFilled(ImVec2(display_size.x - (54.f * SCAL.x) - is_notif_pos, 12.f * SCAL.y), ImVec2(display_size.x - (50.f * SCAL.x) - is_notif_pos, 20 * SCAL.y), IM_COL32(81.f, 169.f, 32.f, 255.f), 0.f, ImDrawCornerFlags_All);
-    ImGui::GetForegroundDrawList()->AddRectFilled(ImVec2(display_size.x - (50.f * SCAL.x) - is_notif_pos, 5.f * SCAL.y), ImVec2(display_size.x - (12.f * SCAL.x) - is_notif_pos, 27 * SCAL.y), IM_COL32(81.f, 169.f, 32.f, 255.f), 2.f, ImDrawCornerFlags_All);
-
-    if (host.display.imgui_render && !gui.live_area.start_screen && !gui.live_area.live_area_screen && get_live_area_sys_app_state(gui) && (ImGui::IsWindowHovered(ImGuiHoveredFlags_None) || ImGui::IsItemClicked(0)))
-        gui.live_area.information_bar = false;
-
-    if (is_notif_pos)
-        draw_notice_info(gui, host);
-
-    ImGui::End();
 }
 
 #ifdef _WIN32
@@ -1338,10 +1204,9 @@ void draw_live_area_screen(GuiState &gui, HostState &host) {
     const auto GATE_SIZE = ImVec2(280.0f * scal.x, 158.0f * scal.y);
     const auto GATE_POS = ImVec2(display_size.x - (items_pos[type[app_path]]["gate"]["pos"].x * scal.x), display_size.y - (items_pos[type[app_path]]["gate"]["pos"].y * scal.y));
     const auto START_SIZE = ImVec2((ImGui::CalcTextSize(BUTTON_STR.c_str()).x * scal_font_size), (ImGui::CalcTextSize(BUTTON_STR.c_str()).y * scal_font_size));
-    const auto START_BUTTON_SIZE = ImVec2((START_SIZE.x + 26.0f) * scal.x, (START_SIZE.y + 5.0f) * scal.y);
+    const auto START_BUTTON_SIZE = ImVec2(START_SIZE.x + 26.0f, START_SIZE.y + 5.0f);
     const auto POS_BUTTON = ImVec2((GATE_POS.x + (GATE_SIZE.x - START_BUTTON_SIZE.x) / 2.0f), (GATE_POS.y + (GATE_SIZE.y - START_BUTTON_SIZE.y) / 1.08f));
-    const auto POS_START = ImVec2(POS_BUTTON.x + (START_BUTTON_SIZE.x - (START_SIZE.x * scal.x)) / 2,
-        POS_BUTTON.y + (START_BUTTON_SIZE.y - (START_SIZE.y * scal.y)) / 2);
+    const auto POS_START = ImVec2(POS_BUTTON.x + (START_BUTTON_SIZE.x - START_SIZE.x) / 2.f, POS_BUTTON.y + (START_BUTTON_SIZE.y - START_SIZE.y) / 2.f);
     const auto SELECT_SIZE = ImVec2(GATE_SIZE.x - (10.f * scal.x), GATE_SIZE.y - (5.f * scal.y));
     const auto SELECT_POS = ImVec2(GATE_POS.x + (5.f * scal.y), GATE_POS.y + (2.f * scal.y));
     const auto SIZE_GATE = ImVec2(GATE_POS.x + GATE_SIZE.x, GATE_POS.y + GATE_SIZE.y);
@@ -1354,13 +1219,10 @@ void draw_live_area_screen(GuiState &gui, HostState &host) {
     }
     ImGui::PushID(app_path.c_str());
     ImGui::GetWindowDrawList()->AddRectFilled(POS_BUTTON, ImVec2(POS_BUTTON.x + START_BUTTON_SIZE.x, POS_BUTTON.y + START_BUTTON_SIZE.y), IM_COL32(20, 168, 222, 255), 10.0f * scal.x, ImDrawCornerFlags_All);
-    ImGui::GetWindowDrawList()->AddText(gui.vita_font, scal_default_font * scal.x, POS_START, IM_COL32(255, 255, 255, 255), BUTTON_STR.c_str());
+    ImGui::GetWindowDrawList()->AddText(gui.vita_font, scal_default_font, POS_START, IM_COL32(255, 255, 255, 255), BUTTON_STR.c_str());
     ImGui::SetCursorPos(SELECT_POS);
-    const auto is_enable = host.io.title_id.empty()
-        || (gui.apps_list_opened[gui.current_app_selected].find("NPXS") != std::string::npos)
-        || (gui.apps_list_opened[gui.current_app_selected] == host.io.title_id);
     ImGui::SetCursorPos(SELECT_POS);
-    if (ImGui::Selectable("##gate", false, is_enable ? ImGuiSelectableFlags_None : ImGuiSelectableFlags_Disabled, SELECT_SIZE) || ImGui::IsKeyPressed(host.cfg.keyboard_button_cross))
+    if (ImGui::Selectable("##gate", false, ImGuiSelectableFlags_None, SELECT_SIZE) || ImGui::IsKeyPressed(host.cfg.keyboard_button_cross))
         pre_run_app(gui, host, app_path);
     ImGui::PopID();
     ImGui::GetWindowDrawList()->AddRect(GATE_POS, SIZE_GATE, IM_COL32(192, 192, 192, 255), 15.f, ImDrawCornerFlags_All, 12.f);
@@ -1413,9 +1275,12 @@ void draw_live_area_screen(GuiState &gui, HostState &host) {
 
     if (!gui.live_area.content_manager && !gui.live_area.manual) {
         ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.f);
-        if (host.io.app_path != app_path) {
-            ImGui::SetCursorPos(ImVec2(display_size.x - (60.0f * scal.x) - BUTTON_SIZE.x, 44.0f * scal.y));
-            if (ImGui::Button("Esc", BUTTON_SIZE) || ImGui::IsKeyPressed(host.cfg.keyboard_button_circle)) {
+        ImGui::SetCursorPos(ImVec2(display_size.x - (60.0f * scal.x) - BUTTON_SIZE.x, 44.0f * scal.y));
+        if (ImGui::Button("Esc", BUTTON_SIZE) || ImGui::IsKeyPressed(host.cfg.keyboard_button_circle)) {
+            if (app_path == host.io.app_path) {
+                stop_all_threads(host.kernel);
+                host.load_exec = true;
+            } else {
                 gui.apps_list_opened.erase(get_app_open_list_index(gui, app_path));
                 if (gui.current_app_selected == 0) {
                     gui.live_area.live_area_screen = false;

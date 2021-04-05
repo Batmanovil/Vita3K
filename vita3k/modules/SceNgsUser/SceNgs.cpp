@@ -21,37 +21,56 @@
 
 #include "SceNgs.h"
 
-struct SceNgsPatchInfo1 {
-    std::int32_t out_channels;
-    std::int32_t in_channels;
-    float unk[3];
-};
-static_assert(sizeof(SceNgsPatchInfo1) == 20);
-
-struct SceNgsPatchInfo2 {
-    std::int32_t unk[5];
-};
-static_assert(sizeof(SceNgsPatchInfo2) == 20);
+#define SCE_NGS_MAX_SYSTEM_CHANNELS 2
 
 using SceNgsSynthSystemHandle = Ptr<ngs::System>;
 using SceNgsRackHandle = Ptr<ngs::Rack>;
 using SceNgsVoiceHandle = Ptr<ngs::Voice>;
 using SceNgsPatchHandle = Ptr<ngs::Patch>;
 
-struct SceNgsCallbackInfo {
-    SceNgsVoiceHandle hVoiceHandle;
-    SceNgsRackHandle hRackHandle;
-    uint32_t uModuleID;
-    uint32_t nCallbackData;
-    uint32_t nCallbackData2;
-    Ptr<void> pCallbackPtr;
-    Ptr<void> pUserData;
+struct SceNgsVolumeMatrix {
+    SceFloat32 matrix[SCE_NGS_MAX_SYSTEM_CHANNELS][SCE_NGS_MAX_SYSTEM_CHANNELS];
 };
+
+struct SceNgsPatchAudioPropInfo {
+    SceInt32 out_channels;
+    SceInt32 in_channels;
+    SceNgsVolumeMatrix volume_matrix;
+};
+
+struct SceNgsVoiceInfo {
+    SceUInt32 voice_state;
+    SceUInt32 num_modules;
+    SceUInt32 num_inputs;
+    SceUInt32 num_outputs;
+    SceUInt32 num_patches_per_output;
+    SceUInt32 update_passed;
+};
+
+static_assert(sizeof(SceNgsPatchAudioPropInfo) == 24);
+
+struct SceNgsPatchDeliveryInfo {
+    SceNgsVoiceHandle source_voice_handle;
+    SceInt32 output_index;
+    SceInt32 output_subindex;
+    SceNgsVoiceHandle dest_voice_handle;
+    SceInt32 input_index;
+};
+
+static_assert(sizeof(SceNgsPatchDeliveryInfo) == 20);
 
 static constexpr SceUInt32 SCE_NGS_OK = 0;
 static constexpr SceUInt32 SCE_NGS_ERROR = 0x804A0001;
 static constexpr SceUInt32 SCE_NGS_ERROR_INVALID_ARG = 0x804A0002;
 static constexpr SceUInt32 SCE_NGS_SIZE_MISMATCH = 0x804A000D;
+
+static constexpr SceUInt32 SCE_NGS_VOICE_STATE_AVAILABLE = 0;
+static constexpr SceUInt32 SCE_NGS_VOICE_STATE_ACTIVE = 1 << 0;
+static constexpr SceUInt32 SCE_NGS_VOICE_STATE_FINALIZE = 1 << 2;
+static constexpr SceUInt32 SCE_NGS_VOICE_STATE_UNLOADING = 1 << 3;
+static constexpr SceUInt32 SCE_NGS_VOICE_STATE_PENDING = 1 << 4;
+static constexpr SceUInt32 SCE_NGS_VOICE_STATE_PAUSED = 1 << 5;
+static constexpr SceUInt32 SCE_NGS_VOICE_STATE_KEY_OFF = 1 << 6;
 
 EXPORT(int, sceNgsAT9GetSectionDetails, const std::uint32_t samples_start, const std::uint32_t num_samples, const std::uint32_t config_data, ngs::atrac9::SkipBufferInfo *info) {
     if (host.cfg.disable_ngs) {
@@ -87,6 +106,9 @@ EXPORT(int, sceNgsPatchCreateRouting, ngs::PatchSetupInfo *patch_info, SceNgsPat
         return RET_ERROR(SCE_NGS_ERROR);
     }
 
+    LOG_TRACE("Patching 0x{:X}:{}:{} to 0x{:X}:{}", patch_info->source.address(), patch_info->source_output_index,
+        patch_info->source_output_index, patch_info->dest.address(), patch_info->dest_input_index);
+
     *handle = source->rack->system->voice_scheduler.patch(host.mem, patch_info);
 
     if (!*handle) {
@@ -96,13 +118,32 @@ EXPORT(int, sceNgsPatchCreateRouting, ngs::PatchSetupInfo *patch_info, SceNgsPat
     return SCE_NGS_OK;
 }
 
-EXPORT(int, sceNgsPatchGetInfo, std::uint32_t patch, Ptr<SceNgsPatchInfo1> patch_info1_, Ptr<SceNgsPatchInfo2> patch_info2_) {
-    auto *patch_info1 = patch_info1_.get(host.mem);
+EXPORT(int, sceNgsPatchGetInfo, SceNgsPatchHandle patch_handle, SceNgsPatchAudioPropInfo *prop_info, SceNgsPatchDeliveryInfo *deli_info) {
+    ngs::Patch *patch = patch_handle.get(host.mem);
+    if (!patch) {
+        return RET_ERROR(SCE_NGS_ERROR_INVALID_ARG);
+    }
 
-    patch_info1->in_channels = 2;
-    patch_info1->out_channels = 2;
+    // Always stereo
+    if (prop_info) {
+        prop_info->in_channels = 2;
+        prop_info->out_channels = 2;
 
-    return STUBBED("2 in/out channels");
+        prop_info->volume_matrix.matrix[0][0] = patch->volume_matrix[0][0];
+        prop_info->volume_matrix.matrix[0][1] = patch->volume_matrix[0][1];
+        prop_info->volume_matrix.matrix[1][0] = patch->volume_matrix[1][0];
+        prop_info->volume_matrix.matrix[1][1] = patch->volume_matrix[1][1];
+    }
+
+    if (deli_info) {
+        deli_info->input_index = patch->dest_index;
+        deli_info->output_index = patch->output_index;
+        deli_info->output_subindex = patch->output_sub_index;
+        deli_info->source_voice_handle = Ptr<ngs::Voice>(patch->source, host.mem);
+        deli_info->dest_voice_handle = Ptr<ngs::Voice>(patch->dest, host.mem);
+    }
+
+    return 0;
 }
 
 EXPORT(int, sceNgsPatchRemoveRouting, SceNgsPatchHandle patch_handle) {
@@ -227,7 +268,7 @@ EXPORT(SceUInt32, sceNgsSystemUpdate, SceNgsSynthSystemHandle handle) {
     }
 
     ngs::System *sys = handle.get(host.mem);
-    sys->voice_scheduler.update(host.mem);
+    sys->voice_scheduler.update(host.kernel, host.mem, thread_id);
 
     return SCE_NGS_OK;
 }
@@ -380,8 +421,53 @@ EXPORT(Ptr<ngs::VoiceDefinition>, sceNgsVoiceDefGetTemplate1) {
     return get_voice_definition(host.ngs, host.mem, ngs::BussType::BUSS_NORMAL_PLAYER);
 }
 
-EXPORT(int, sceNgsVoiceGetInfo) {
-    return UNIMPLEMENTED();
+static SceUInt32 ngsVoiceStateFromHLEState(const ngs::VoiceState state) {
+    switch (state) {
+    case ngs::VoiceState::VOICE_STATE_AVAILABLE:
+        return SCE_NGS_VOICE_STATE_AVAILABLE;
+
+    case ngs::VoiceState::VOICE_STATE_ACTIVE:
+        return SCE_NGS_VOICE_STATE_ACTIVE;
+
+    case ngs::VoiceState::VOICE_STATE_FINALIZING:
+        return SCE_NGS_VOICE_STATE_FINALIZE;
+
+    case ngs::VoiceState::VOICE_STATE_KEY_OFF:
+        return SCE_NGS_VOICE_STATE_KEY_OFF;
+
+    case ngs::VoiceState::VOICE_STATE_PAUSED:
+        return SCE_NGS_VOICE_STATE_PAUSED;
+
+    case ngs::VoiceState::VOICE_STATE_PENDING:
+        return SCE_NGS_VOICE_STATE_PENDING;
+
+    case ngs::VoiceState::VOICE_STATE_UNLOADING:
+        return SCE_NGS_VOICE_STATE_UNLOADING;
+
+    default:
+        assert(false && "Invalid voice state to translate");
+        break;
+    }
+
+    return SCE_NGS_VOICE_STATE_AVAILABLE;
+}
+
+EXPORT(SceInt32, sceNgsVoiceGetInfo, SceNgsVoiceHandle handle, SceNgsVoiceInfo *info) {
+    ngs::Voice *voice = handle.get(host.mem);
+    if (!voice || !info) {
+        return RET_ERROR(SCE_NGS_ERROR_INVALID_ARG);
+    }
+
+    const std::lock_guard<std::mutex> guard(*voice->voice_lock);
+
+    info->voice_state = ngsVoiceStateFromHLEState(voice->state);
+    info->num_modules = static_cast<SceUInt32>(voice->datas.size());
+    info->num_inputs = static_cast<SceUInt32>(voice->inputs.inputs.size());
+    info->num_outputs = voice->rack->vdef->output_count();
+    info->num_patches_per_output = static_cast<SceUInt32>(voice->rack->patches_per_output);
+    info->update_passed = voice->frame_count;
+
+    return 0;
 }
 
 EXPORT(int, sceNgsVoiceGetModuleBypass) {
@@ -392,22 +478,51 @@ EXPORT(int, sceNgsVoiceGetModuleType) {
     return UNIMPLEMENTED();
 }
 
-EXPORT(int, sceNgsVoiceGetOutputPatch) {
-    return UNIMPLEMENTED();
+EXPORT(SceInt32, sceNgsVoiceGetOutputPatch, SceNgsVoiceHandle voice_handle, const SceInt32 output_index, const SceInt32 output_subindex, SceNgsPatchHandle *handle) {
+    if (host.cfg.disable_ngs) {
+        return 0;
+    }
+
+    ngs::Voice *voice = voice_handle.get(host.mem);
+
+    if (!voice || !handle) {
+        return RET_ERROR(SCE_NGS_ERROR_INVALID_ARG);
+    }
+
+    if ((output_subindex < 0) || (output_index < 0)) {
+        return RET_ERROR(SCE_NGS_ERROR_INVALID_ARG);
+    }
+
+    if ((output_index >= static_cast<SceInt32>(voice->rack->vdef->output_count())) || (output_subindex >= voice->rack->patches_per_output)) {
+        return RET_ERROR(SCE_NGS_ERROR_INVALID_ARG);
+    }
+
+    *handle = voice->patches[output_index][output_subindex];
+    if (!(*handle) || (handle->get(host.mem))->output_sub_index == -1) {
+        LOG_WARN("Getting non-existen output patch port {}:{}", output_index, output_subindex);
+        *handle = 0;
+    }
+
+    return 0;
 }
 
 EXPORT(int, sceNgsVoiceGetParamsOutOfRange) {
     return UNIMPLEMENTED();
 }
 
-EXPORT(int, sceNgsVoiceGetStateData, SceNgsVoiceHandle voice_handle, const std::uint32_t unk, void *mem, const std::uint32_t space_size) {
+EXPORT(SceInt32, sceNgsVoiceGetStateData, SceNgsVoiceHandle voice_handle, const SceUInt32 module, void *mem, const SceUInt32 mem_size) {
     if (host.cfg.disable_ngs) {
         return 0;
     }
 
     ngs::Voice *voice = voice_handle.get(host.mem);
-    std::memcpy(mem, voice->voice_state_data.data(), std::min<std::size_t>(space_size, voice->voice_state_data.size()));
+    ngs::ModuleData *storage = voice->module_storage(module);
 
+    if (!storage) {
+        return RET_ERROR(SCE_NGS_ERROR_INVALID_ARG);
+    }
+
+    std::memcpy(mem, storage->voice_state_data.data(), std::min<std::size_t>(mem_size, storage->voice_state_data.size()));
     return SCE_NGS_OK;
 }
 
@@ -415,8 +530,19 @@ EXPORT(int, sceNgsVoiceInit) {
     return UNIMPLEMENTED();
 }
 
-EXPORT(int, sceNgsVoiceKeyOff) {
-    return UNIMPLEMENTED();
+EXPORT(SceInt32, sceNgsVoiceKeyOff, SceNgsVoiceHandle voice_handle) {
+    if (host.cfg.disable_ngs) {
+        return SCE_NGS_OK;
+    }
+
+    ngs::Voice *voice = voice_handle.get(host.mem);
+
+    if (!voice) {
+        return RET_ERROR(SCE_NGS_ERROR_INVALID_ARG);
+    }
+
+    voice->rack->system->voice_scheduler.off(voice);
+    return SCE_NGS_OK;
 }
 
 EXPORT(int, sceNgsVoiceKill, SceNgsVoiceHandle voice_handle) {
@@ -430,14 +556,11 @@ EXPORT(int, sceNgsVoiceKill, SceNgsVoiceHandle voice_handle) {
         return RET_ERROR(SCE_NGS_ERROR_INVALID_ARG);
     }
 
-    if (!voice->rack->system->voice_scheduler.stop(voice)) {
-        return RET_ERROR(SCE_NGS_ERROR);
-    }
-
+    voice->rack->system->voice_scheduler.stop(voice);
     return 0;
 }
 
-EXPORT(SceUInt32, sceNgsVoiceLockParams, SceNgsVoiceHandle voice_handle, std::uint32_t unk1, std::uint32_t unk2, Ptr<ngs::BufferParamsInfo> buf) {
+EXPORT(SceUInt32, sceNgsVoiceLockParams, SceNgsVoiceHandle voice_handle, SceUInt32 module, SceUInt32 unk2, Ptr<ngs::BufferParamsInfo> buf) {
     if (host.cfg.disable_ngs) {
         auto *buffer_info = buf.get(host.mem);
 
@@ -447,7 +570,17 @@ EXPORT(SceUInt32, sceNgsVoiceLockParams, SceNgsVoiceHandle voice_handle, std::ui
     }
 
     ngs::Voice *voice = voice_handle.get(host.mem);
-    ngs::BufferParamsInfo *info = voice->lock_params(host.mem);
+    if (!voice) {
+        return RET_ERROR(SCE_NGS_ERROR_INVALID_ARG);
+    }
+
+    ngs::ModuleData *data = voice->module_storage(module);
+
+    if (!data) {
+        return RET_ERROR(SCE_NGS_ERROR_INVALID_ARG);
+    }
+
+    ngs::BufferParamsInfo *info = data->lock_params(host.mem);
 
     if (!info) {
         return RET_ERROR(SCE_NGS_ERROR);
@@ -457,20 +590,65 @@ EXPORT(SceUInt32, sceNgsVoiceLockParams, SceNgsVoiceHandle voice_handle, std::ui
     return SCE_NGS_OK;
 }
 
-EXPORT(int, sceNgsVoicePatchSetVolume) {
-    return UNIMPLEMENTED();
+EXPORT(SceInt32, sceNgsVoicePatchSetVolume, SceNgsPatchHandle patch_handle, const SceInt32 output_channel, const SceInt32 input_channel, const SceFloat32 vol) {
+    if (host.cfg.disable_ngs)
+        return SCE_NGS_OK;
+
+    ngs::Patch *patch = patch_handle.get(host.mem);
+    if (!patch || patch->output_sub_index == -1)
+        return RET_ERROR(SCE_NGS_ERROR_INVALID_ARG);
+
+    patch->volume_matrix[output_channel][input_channel] = vol;
+
+    return SCE_NGS_OK;
 }
 
-EXPORT(int, sceNgsVoicePatchSetVolumes) {
-    return UNIMPLEMENTED();
+EXPORT(SceInt32, sceNgsVoicePatchSetVolumes, SceNgsPatchHandle patch_handle, const SceInt32 output_channel, const SceFloat32 *volumes, const SceInt32 vols) {
+    if (host.cfg.disable_ngs)
+        return SCE_NGS_OK;
+
+    ngs::Patch *patch = patch_handle.get(host.mem);
+    if (!patch || patch->output_sub_index == -1)
+        return RET_ERROR(SCE_NGS_ERROR_INVALID_ARG);
+
+    for (int i = 0; i < std::min(vols, 2); i++)
+        patch->volume_matrix[output_channel][i] = volumes[i];
+
+    return SCE_NGS_OK;
 }
 
-EXPORT(int, sceNgsVoicePatchSetVolumesMatrix) {
-    return UNIMPLEMENTED();
+EXPORT(SceInt32, sceNgsVoicePatchSetVolumesMatrix, SceNgsPatchHandle patch_handle, const SceNgsVolumeMatrix *matrix) {
+    if (host.cfg.disable_ngs)
+        return 0;
+
+    ngs::Patch *patch = patch_handle.get(host.mem);
+    if (!patch || patch->output_sub_index == -1)
+        return RET_ERROR(SCE_NGS_ERROR_INVALID_ARG);
+
+    patch->volume_matrix[0][0] = matrix->matrix[0][0];
+    patch->volume_matrix[0][1] = matrix->matrix[0][1];
+    patch->volume_matrix[1][0] = matrix->matrix[1][0];
+    patch->volume_matrix[1][1] = matrix->matrix[1][1];
+
+    return SCE_NGS_OK;
 }
 
-EXPORT(int, sceNgsVoicePause) {
-    return UNIMPLEMENTED();
+EXPORT(int, sceNgsVoicePause, SceNgsVoiceHandle handle) {
+    if (host.cfg.disable_ngs) {
+        return 0;
+    }
+
+    ngs::Voice *voice = handle.get(host.mem);
+
+    if (!voice) {
+        return RET_ERROR(SCE_NGS_ERROR_INVALID_ARG);
+    }
+
+    if (!voice->rack->system->voice_scheduler.pause(voice)) {
+        return RET_ERROR(SCE_NGS_ERROR);
+    }
+
+    return SCE_NGS_OK;
 }
 
 EXPORT(SceUInt32, sceNgsVoicePlay, SceNgsVoiceHandle handle) {
@@ -491,22 +669,41 @@ EXPORT(SceUInt32, sceNgsVoicePlay, SceNgsVoiceHandle handle) {
     return SCE_NGS_OK;
 }
 
-EXPORT(int, sceNgsVoiceResume) {
-    return UNIMPLEMENTED();
+EXPORT(int, sceNgsVoiceResume, SceNgsVoiceHandle handle) {
+    if (host.cfg.disable_ngs) {
+        return 0;
+    }
+
+    ngs::Voice *voice = handle.get(host.mem);
+
+    if (!voice) {
+        return RET_ERROR(SCE_NGS_ERROR_INVALID_ARG);
+    }
+
+    if (!voice->rack->system->voice_scheduler.resume(host.mem, voice)) {
+        return RET_ERROR(SCE_NGS_ERROR);
+    }
+
+    return SCE_NGS_OK;
 }
 
 EXPORT(int, sceNgsVoiceSetFinishedCallback) {
     return UNIMPLEMENTED();
 }
 
-EXPORT(int, sceNgsVoiceSetModuleCallback, SceNgsVoiceHandle voice_handle, uint32_t module, Ptr<void> callback, Ptr<void> user_data) {
+EXPORT(SceInt32, sceNgsVoiceSetModuleCallback, SceNgsVoiceHandle voice_handle, const SceUInt32 module, Ptr<ngs::ModuleCallback> callback, Ptr<void> user_data) {
     if (host.cfg.disable_ngs) {
         return 0;
     }
 
     ngs::Voice *voice = voice_handle.get(host.mem);
-    voice->callback = callback;
-    voice->user_data = user_data;
+    ngs::ModuleData *storage = voice->module_storage(module);
+    if (!storage) {
+        return RET_ERROR(SCE_NGS_ERROR_INVALID_ARG);
+    }
+
+    storage->callback = callback;
+    storage->user_data = user_data;
 
     return 0;
 }
@@ -519,14 +716,19 @@ EXPORT(int, sceNgsVoiceSetPreset) {
     return UNIMPLEMENTED();
 }
 
-EXPORT(SceUInt32, sceNgsVoiceUnlockParams, SceNgsVoiceHandle handle) {
+EXPORT(SceUInt32, sceNgsVoiceUnlockParams, SceNgsVoiceHandle handle, const SceUInt32 module_index) {
     if (host.cfg.disable_ngs) {
         return 0;
     }
 
     ngs::Voice *voice = handle.get(host.mem);
+    ngs::ModuleData *data = voice->module_storage(module_index);
 
-    if (!voice->unlock_params()) {
+    if (!data) {
+        return RET_ERROR(SCE_NGS_ERROR_INVALID_ARG);
+    }
+
+    if (!data->unlock_params()) {
         return RET_ERROR(SCE_NGS_ERROR);
     }
 

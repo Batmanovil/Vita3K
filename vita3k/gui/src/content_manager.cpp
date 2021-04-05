@@ -82,7 +82,7 @@ struct SaveData {
     std::string title;
     std::string title_id;
     size_t size;
-    std::string date;
+    tm date;
 };
 
 static std::vector<SaveData> save_data_list;
@@ -101,8 +101,6 @@ static void get_save_data_list(GuiState &gui, HostState &host) {
 
             const auto last_writen = fs::last_write_time(save);
             SAFE_LOCALTIME(&last_writen, &updated_tm);
-            const auto date = fmt::format("{}/{}/{} {:0>2d}:{:0>2d}",
-                updated_tm.tm_mday, updated_tm.tm_mon + 1, updated_tm.tm_year + 1900, updated_tm.tm_hour, updated_tm.tm_min);
 
             size_t size = 0;
             for (const auto &save_path : fs::recursive_directory_iterator(save)) {
@@ -110,7 +108,7 @@ static void get_save_data_list(GuiState &gui, HostState &host) {
                     size += fs::file_size(save_path.path());
             }
 
-            save_data_list.push_back({ get_app_index(gui, title_id)->title, title_id, size, date });
+            save_data_list.push_back({ get_app_index(gui, title_id)->title, title_id, size, updated_tm });
         }
     }
     std::sort(save_data_list.begin(), save_data_list.end(), [](const SaveData &sa, const SaveData &sb) {
@@ -181,7 +179,7 @@ static bool get_size_selected_contents(GuiState &gui, HostState &host) {
 struct Dlc {
     std::string name;
     std::string size;
-    std::string date;
+    tm date;
 };
 
 static std::map<std::string, Dlc> dlc_info;
@@ -206,10 +204,7 @@ static void get_content_info(GuiState &gui, HostState &host) {
             tm updated_tm = {};
 
             const auto last_writen = fs::last_write_time(dlc);
-            const auto updated = SAFE_LOCALTIME(&last_writen, &updated_tm);
-
-            dlc_info[content_id].date = fmt::format("{}/{}/{} {:0>2d}:{:0>2d}",
-                updated_tm.tm_mday, updated_tm.tm_mon + 1, updated_tm.tm_year + 1900, updated_tm.tm_hour, updated_tm.tm_min);
+            SAFE_LOCALTIME(&last_writen, &dlc_info[content_id].date);
 
             size_t dlc_size = 0;
             for (const auto &content : fs::recursive_directory_iterator(dlc)) {
@@ -301,6 +296,8 @@ void draw_content_manager(GuiState &gui, HostState &host) {
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 10.f);
     ImGui::BeginChild("##content_manager_child", menu == "info" ? SIZE_INFO : SIZE_LIST, false, ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings);
 
+    auto common = host.common_dialog.lang.common;
+
     if (menu.empty()) {
         title = "Content Manager";
         ImGui::SetWindowFontScale(1.2f);
@@ -382,7 +379,7 @@ void draw_content_manager(GuiState &gui, HostState &host) {
             ImGui::SetCursorPos(ImVec2(106.f * SCAL.x, ImGui::GetCursorPosY() + (76.f * SCAL.y)));
             ImGui::TextColored(GUI_COLOR_TEXT, "Data to be Deleted: %s", size_selected_contents.c_str());
             ImGui::SetCursorPos(ImVec2((POPUP_SIZE.x / 2) - (BUTTON_SIZE.x + (10.f * SCAL.x)), POPUP_SIZE.y - BUTTON_SIZE.y - (22.0f * SCAL.y)));
-            if (ImGui::Button("Cancel", BUTTON_SIZE) || ImGui::IsKeyPressed(host.cfg.keyboard_button_circle)) {
+            if (ImGui::Button(!common["cancel"].empty() ? common["cancel"].c_str() : "Cancel", BUTTON_SIZE) || ImGui::IsKeyPressed(host.cfg.keyboard_button_circle)) {
                 popup = false;
             }
             ImGui::SameLine(0, 20.f * SCAL.x);
@@ -479,7 +476,12 @@ void draw_content_manager(GuiState &gui, HostState &host) {
                     ImGui::TextColored(GUI_COLOR_TEXT, "%s", save.title.c_str());
                     ImGui::SetWindowFontScale(0.8f);
                     ImGui::SetCursorPosY(Title_POS + (46.f * SCAL.y));
-                    ImGui::TextColored(GUI_COLOR_TEXT, "%s %s", save.date.c_str(), get_unit_size(save.size).c_str());
+                    auto DATE_TIME = get_date_time(gui, host, save.date);
+                    ImGui::TextColored(GUI_COLOR_TEXT, "%s %s", DATE_TIME["date"].c_str(), DATE_TIME["clock"].c_str());
+                    if (gui.users[host.io.user_id].clock_12_hour) {
+                        ImGui::SameLine();
+                        ImGui::TextColored(GUI_COLOR_TEXT, "%s", DATE_TIME["day-moment"].c_str());
+                    }
                     ImGui::PopID();
                     ImGui::SetCursorPosY(ImGui::GetCursorPosY() + (6.f * SCAL.y));
                     ImGui::Separator();
@@ -527,7 +529,12 @@ void draw_content_manager(GuiState &gui, HostState &host) {
                 ImGui::SetWindowFontScale(1.f);
                 ImGui::TextColored(GUI_COLOR_TEXT, "Updated");
                 ImGui::SameLine(280.f * SCAL.x);
-                ImGui::TextColored(GUI_COLOR_TEXT, "%s", dlc.second.date.c_str());
+                auto DATE_TIME = get_date_time(gui, host, dlc.second.date);
+                ImGui::TextColored(GUI_COLOR_TEXT, "%s %s", DATE_TIME["date"].c_str(), DATE_TIME["clock"].c_str());
+                if (gui.users[host.io.user_id].clock_12_hour) {
+                    ImGui::SameLine();
+                    ImGui::TextColored(GUI_COLOR_TEXT, "%s", DATE_TIME["day-moment"].c_str());
+                }
                 ImGui::SetCursorPosY(ImGui::GetCursorPosY() + (35.f * SCAL.y));
                 ImGui::TextColored(GUI_COLOR_TEXT, "Size");
                 ImGui::SameLine(280.f * SCAL.x);
@@ -560,7 +567,7 @@ void draw_content_manager(GuiState &gui, HostState &host) {
     } else {
         ImGui::SetWindowFontScale(1.5f * SCAL.x);
         ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(0.f, 482.f * SCAL.y), display_size, IM_COL32(39.f, 42.f, 49.f, 255.f), 0.f, ImDrawCornerFlags_All);
-        if (ImGui::Button("Cancel", ImVec2(202.f * SCAL.x, 44.f * SCAL.y))) {
+        if (ImGui::Button(!common["cancel"].empty() ? common["cancel"].c_str() : "Cancel", ImVec2(202.f * SCAL.x, 44.f * SCAL.y))) {
             if (!menu.empty()) {
                 menu.clear();
                 contents_selected.clear();
@@ -569,8 +576,10 @@ void draw_content_manager(GuiState &gui, HostState &host) {
         const auto state = std::find_if(contents_selected.begin(), contents_selected.end(), [&](const auto &c) {
             return !c.second;
         }) != contents_selected.end();
+        ImGui::SetWindowFontScale(1.2f * SCAL.x);
         ImGui::SetCursorPos(ImVec2(display_size.x - (450.f * SCAL.x), display_size.y - (88.f * SCAL.y)));
-        if (ImGui::Button(state ? "Select All" : "Clear All", ImVec2(224.f * SCAL.x, 44.f * SCAL.y))) {
+        const auto select_all = !common["select_all"].empty() ? common["select_all"].c_str() : "Select All";
+        if (ImGui::Button(state ? select_all : "Clear All", ImVec2(224.f * SCAL.x, 44.f * SCAL.y))) {
             for (auto &content : contents_selected) {
                 if (state)
                     content.second = true;
@@ -582,8 +591,10 @@ void draw_content_manager(GuiState &gui, HostState &host) {
             return cs.second;
         }) != contents_selected.end();
         ImGui::SameLine();
+        ImGui::SetWindowFontScale(1.5f * SCAL.x);
         ImGui::PushStyleVar(ImGuiStyleVar_SelectableTextAlign, ImVec2(0.5f, 0.5f));
-        if (is_enable ? ImGui::Button("Delete", ImVec2(202.f * SCAL.x, 44.f * SCAL.y)) && get_size_selected_contents(gui, host) : ImGui::Selectable("Delete", false, ImGuiSelectableFlags_Disabled, ImVec2(194.f * SCAL.x, 36.f * SCAL.y)))
+        const auto delete_str = !common["delete"].empty() ? common["delete"].c_str() : "Delete";
+        if (is_enable ? ImGui::Button(delete_str, ImVec2(202.f * SCAL.x, 44.f * SCAL.y)) && get_size_selected_contents(gui, host) : ImGui::Selectable(delete_str, false, ImGuiSelectableFlags_Disabled, ImVec2(194.f * SCAL.x, 36.f * SCAL.y)))
             popup = true;
         ImGui::PopStyleVar();
     }

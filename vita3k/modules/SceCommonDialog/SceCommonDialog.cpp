@@ -201,6 +201,10 @@ EXPORT(int, sceMsgDialogInit, const Ptr<SceMsgDialogParam> param) {
 
     host.common_dialog.msg.mode = p->mode;
     host.common_dialog.msg.status = SCE_MSG_DIALOG_BUTTON_ID_INVALID;
+
+    auto common = host.common_dialog.lang.common;
+    const auto CANCEL = !common["cancel"].empty() ? common["cancel"] : "Cancel";
+
     switch (p->mode) {
     case SCE_MSG_DIALOG_MODE_USER_MSG:
         up = p->userMsgParam.get(host.mem);
@@ -213,9 +217,9 @@ EXPORT(int, sceMsgDialogInit, const Ptr<SceMsgDialogParam> param) {
             break;
         case SCE_MSG_DIALOG_BUTTON_TYPE_YESNO:
             host.common_dialog.msg.btn_num = 2;
-            host.common_dialog.msg.btn[0] = "Yes";
+            host.common_dialog.msg.btn[0] = !common["yes"].empty() ? common["yes"] : "Yes";
             host.common_dialog.msg.btn_val[0] = SCE_MSG_DIALOG_BUTTON_ID_YES;
-            host.common_dialog.msg.btn[1] = "No";
+            host.common_dialog.msg.btn[1] = !common["no"].empty() ? common["no"] : "No";
             host.common_dialog.msg.btn_val[1] = SCE_MSG_DIALOG_BUTTON_ID_NO;
             break;
         case SCE_MSG_DIALOG_BUTTON_TYPE_NONE:
@@ -225,12 +229,12 @@ EXPORT(int, sceMsgDialogInit, const Ptr<SceMsgDialogParam> param) {
             host.common_dialog.msg.btn_num = 2;
             host.common_dialog.msg.btn[0] = "OK";
             host.common_dialog.msg.btn_val[0] = SCE_MSG_DIALOG_BUTTON_ID_OK;
-            host.common_dialog.msg.btn[1] = "Cancel";
+            host.common_dialog.msg.btn[1] = CANCEL;
             host.common_dialog.msg.btn_val[1] = SCE_MSG_DIALOG_BUTTON_ID_NO;
             break;
         case SCE_MSG_DIALOG_BUTTON_TYPE_CANCEL:
             host.common_dialog.msg.btn_num = 1;
-            host.common_dialog.msg.btn[0] = "Cancel";
+            host.common_dialog.msg.btn[0] = CANCEL;
             host.common_dialog.msg.btn_val[0] = SCE_MSG_DIALOG_BUTTON_ID_INVALID;
             break;
         case SCE_MSG_DIALOG_BUTTON_TYPE_3BUTTONS:
@@ -260,18 +264,18 @@ EXPORT(int, sceMsgDialogInit, const Ptr<SceMsgDialogParam> param) {
         case SCE_MSG_DIALOG_SYSMSG_TYPE_MAGNETIC_CALIBRATION:
             host.common_dialog.msg.message = "Move away from the source of interference, or adjust the compass by moving your PS Vita system as shown below.";
             host.common_dialog.msg.btn_num = 1;
-            host.common_dialog.msg.btn[0] = "Cancel";
+            host.common_dialog.msg.btn[0] = CANCEL;
             host.common_dialog.msg.btn_val[0] = SCE_MSG_DIALOG_BUTTON_ID_INVALID;
             break;
         case SCE_MSG_DIALOG_SYSMSG_TYPE_MIC_DISABLED:
             host.common_dialog.msg.message = "The microphone is disabled";
             host.common_dialog.msg.btn_num = 1;
-            host.common_dialog.msg.btn[0] = "Cancel";
+            host.common_dialog.msg.btn[0] = CANCEL;
             host.common_dialog.msg.btn_val[0] = SCE_MSG_DIALOG_BUTTON_ID_INVALID;
             break;
         case SCE_MSG_DIALOG_SYSMSG_TYPE_WAIT_CANCEL:
             host.common_dialog.msg.message = "Please wait.";
-            host.common_dialog.msg.btn[0] = "Cancel";
+            host.common_dialog.msg.btn[0] = CANCEL;
             host.common_dialog.msg.btn_val[0] = SCE_MSG_DIALOG_BUTTON_ID_NO;
             host.common_dialog.msg.btn_num = 1;
             break;
@@ -657,8 +661,8 @@ static void check_empty_param(HostState &host, const SceAppUtilSaveDataSlotEmpty
     host.common_dialog.savedata.subtitle[host.common_dialog.savedata.selected_save] = "";
     host.common_dialog.savedata.icon_buffer[host.common_dialog.savedata.selected_save].clear();
     host.common_dialog.savedata.has_date[host.common_dialog.savedata.selected_save] = false;
-    if (empty_param != nullptr) {
-        host.common_dialog.savedata.title[host.common_dialog.savedata.selected_save] = empty_param->title.get(host.mem) == nullptr ? "New Saved Data" : empty_param->title.get(host.mem);
+    if (empty_param) {
+        host.common_dialog.savedata.title[host.common_dialog.savedata.selected_save] = empty_param->title.get(host.mem) ? empty_param->title.get(host.mem) : (!host.common_dialog.lang.save_data["new_saved_data"].empty() ? host.common_dialog.lang.save_data["new_saved_data"] : "New Saved Data");
         auto device = device::get_device(empty_param->iconPath.get(host.mem));
         auto thumbnail_path = translate_path(empty_param->iconPath.get(host.mem), device, host.io.device_paths);
         vfs::read_file(VitaIoDevice::ux0, thumbnail_buffer, host.pref_path, thumbnail_path);
@@ -677,8 +681,8 @@ static void check_save_file(SceUID fd, std::vector<SceAppUtilSaveDataSlotParam> 
         host.common_dialog.savedata.icon_buffer[index].clear();
         host.common_dialog.savedata.has_date[index] = false;
         auto empty_param = host.common_dialog.savedata.list_empty_param;
-        if (empty_param != nullptr) {
-            host.common_dialog.savedata.title[index] = empty_param->title.get(host.mem) == nullptr ? "New Saved Data" : empty_param->title.get(host.mem);
+        if (empty_param) {
+            host.common_dialog.savedata.title[index] = empty_param->title.get(host.mem) ? empty_param->title.get(host.mem) : (!host.common_dialog.lang.save_data["new_saved_data"].empty() ? host.common_dialog.lang.save_data["new_saved_data"] : "New Saved Data");
             auto device = device::get_device(empty_param->iconPath.get(host.mem));
             auto thumbnail_path = translate_path(empty_param->iconPath.get(host.mem), device, host.io.device_paths);
             vfs::read_file(VitaIoDevice::ux0, thumbnail_buffer, host.pref_path, thumbnail_path);
@@ -703,6 +707,7 @@ static void check_save_file(SceUID fd, std::vector<SceAppUtilSaveDataSlotParam> 
 }
 
 static void handle_user_message(SceSaveDataDialogUserMessageParam *user_message, HostState &host) {
+    auto common = host.common_dialog.lang.common;
     switch (user_message->buttonType) {
     case SCE_SAVEDATA_DIALOG_BUTTON_TYPE_OK:
         host.common_dialog.savedata.btn_num = 1;
@@ -711,9 +716,9 @@ static void handle_user_message(SceSaveDataDialogUserMessageParam *user_message,
         break;
     case SCE_SAVEDATA_DIALOG_BUTTON_TYPE_YESNO:
         host.common_dialog.savedata.btn_num = 2;
-        host.common_dialog.savedata.btn[0] = "No";
+        host.common_dialog.savedata.btn[0] = !common["no"].empty() ? common["no"] : "No";
         host.common_dialog.savedata.btn_val[0] = SCE_SAVEDATA_DIALOG_BUTTON_ID_NO;
-        host.common_dialog.savedata.btn[1] = "Yes";
+        host.common_dialog.savedata.btn[1] = !common["yes"].empty() ? common["yes"] : "Yes";
         host.common_dialog.savedata.btn_val[1] = SCE_SAVEDATA_DIALOG_BUTTON_ID_YES;
         break;
     case SCE_SAVEDATA_DIALOG_BUTTON_TYPE_NONE:
@@ -722,10 +727,17 @@ static void handle_user_message(SceSaveDataDialogUserMessageParam *user_message,
         break;
     }
 }
+
 static void handle_sys_message(SceSaveDataDialogSystemMessageParam *sys_message, HostState &host) {
+    auto lang = host.common_dialog.lang.save_data;
+
+    auto common = host.common_dialog.lang.common;
+    const auto NO = !common["no"].empty() ? common["no"] : "No";
+    const auto YES = !common["yes"].empty() ? common["yes"] : "Yes";
+
     switch (sys_message->sysMsgType) {
     case SCE_SAVEDATA_DIALOG_SYSMSG_TYPE_NODATA:
-        host.common_dialog.savedata.msg = "There is no saved data.";
+        host.common_dialog.savedata.msg = !lang["no_saved_data"].empty() ? lang["no_saved_data"] : "There is no saved data.";
         host.common_dialog.savedata.btn_num = 1;
         host.common_dialog.savedata.btn[0] = "OK";
         host.common_dialog.savedata.btn_val[0] = SCE_SAVEDATA_DIALOG_BUTTON_ID_OK;
@@ -733,57 +745,57 @@ static void handle_sys_message(SceSaveDataDialogSystemMessageParam *sys_message,
     case SCE_SAVEDATA_DIALOG_SYSMSG_TYPE_CONFIRM:
         switch (host.common_dialog.savedata.display_type) {
         case SCE_SAVEDATA_DIALOG_TYPE_SAVE:
-            host.common_dialog.savedata.msg = "Do you want to save the data?";
+            host.common_dialog.savedata.msg = !lang["save_the_data"].empty() ? lang["save_the_data"] : "Do you want to save the data?";
             break;
         case SCE_SAVEDATA_DIALOG_TYPE_LOAD:
-            host.common_dialog.savedata.msg = "Do you want to load this saved data?";
+            host.common_dialog.savedata.msg = !lang["load_saved_data"].empty() ? lang["load_saved_data"] : "Do you want to load this saved data?";
             break;
         case SCE_SAVEDATA_DIALOG_TYPE_DELETE:
-            host.common_dialog.savedata.msg = "Do you want to delete this saved data?";
+            host.common_dialog.savedata.msg = !lang["delete_saved_data"].empty() ? lang["delete_saved_data"] : "Do you want to delete this saved data?";
             break;
         }
         host.common_dialog.savedata.btn_num = 2;
-        host.common_dialog.savedata.btn[0] = "No";
+        host.common_dialog.savedata.btn[0] = NO;
         host.common_dialog.savedata.btn_val[0] = SCE_SAVEDATA_DIALOG_BUTTON_ID_NO;
-        host.common_dialog.savedata.btn[1] = "Yes";
+        host.common_dialog.savedata.btn[1] = YES;
         host.common_dialog.savedata.btn_val[1] = SCE_SAVEDATA_DIALOG_BUTTON_ID_YES;
         break;
     case SCE_SAVEDATA_DIALOG_SYSMSG_TYPE_OVERWRITE:
-        host.common_dialog.savedata.msg = "Do you want to overwrite this saved data?";
+        host.common_dialog.savedata.msg = !lang["overwrite_saved_data"].empty() ? lang["overwrite_saved_data"] : "Do you want to overwrite this saved data?";
         host.common_dialog.savedata.btn_num = 2;
-        host.common_dialog.savedata.btn[0] = "No";
+        host.common_dialog.savedata.btn[0] = NO;
         host.common_dialog.savedata.btn_val[0] = SCE_SAVEDATA_DIALOG_BUTTON_ID_NO;
-        host.common_dialog.savedata.btn[1] = "Yes";
+        host.common_dialog.savedata.btn[1] = YES;
         host.common_dialog.savedata.btn_val[1] = SCE_SAVEDATA_DIALOG_BUTTON_ID_YES;
         break;
     case SCE_SAVEDATA_DIALOG_SYSMSG_TYPE_NOSPACE:
-        host.common_dialog.savedata.msg = "There is not enough free space on the memory card.";
+        host.common_dialog.savedata.msg = !lang["not_free_space"].empty() ? lang["not_free_space"] : "There is not enough free space on the memory card.";
         host.common_dialog.savedata.btn_num = 0;
         break;
     case SCE_SAVEDATA_DIALOG_SYSMSG_TYPE_PROGRESS:
         host.common_dialog.savedata.btn_num = 0;
         switch (host.common_dialog.savedata.display_type) {
         case SCE_SAVEDATA_DIALOG_TYPE_SAVE:
-            host.common_dialog.savedata.msg = "Saving...\nDo not power off the system or close the application";
+            host.common_dialog.savedata.msg = !lang["warning_saving"].empty() ? lang["warning_saving"] : "Saving...\nDo not power off the system or close the application";
             break;
         case SCE_SAVEDATA_DIALOG_TYPE_LOAD:
-            host.common_dialog.savedata.msg = "Loading...";
+            host.common_dialog.savedata.msg = !lang["loading"].empty() ? lang["loading"] : "Loading...";
             break;
         case SCE_SAVEDATA_DIALOG_TYPE_DELETE:
-            host.common_dialog.savedata.msg = "Please Wait...";
+            host.common_dialog.savedata.msg = !common["please_wait"].empty() ? common["please_wait"] : "Please Wait...";
             break;
         }
         break;
     case SCE_SAVEDATA_DIALOG_SYSMSG_TYPE_FINISHED:
         switch (host.common_dialog.savedata.display_type) {
         case SCE_SAVEDATA_DIALOG_TYPE_SAVE:
-            host.common_dialog.savedata.msg = "Saving complete.";
+            host.common_dialog.savedata.msg = !lang["saving_complete"].empty() ? lang["saving_complete"] : "Saving complete.";
             break;
         case SCE_SAVEDATA_DIALOG_TYPE_LOAD:
-            host.common_dialog.savedata.msg = "Loading complete.";
+            host.common_dialog.savedata.msg = !lang["load_complete"].empty() ? lang["load_complete"] : "Loading complete.";
             break;
         case SCE_SAVEDATA_DIALOG_TYPE_DELETE:
-            host.common_dialog.savedata.msg = "Deletion complete.";
+            host.common_dialog.savedata.msg = !lang["deletion_complete"].empty() ? lang["deletion_complete"] : "Deletion complete.";
             break;
         }
         host.common_dialog.savedata.btn_num = 1;
@@ -793,29 +805,29 @@ static void handle_sys_message(SceSaveDataDialogSystemMessageParam *sys_message,
     case SCE_SAVEDATA_DIALOG_SYSMSG_TYPE_CONFIRM_CANCEL:
         switch (host.common_dialog.savedata.display_type) {
         case SCE_SAVEDATA_DIALOG_TYPE_SAVE:
-            host.common_dialog.savedata.msg = "Do you want to cancel saving?";
+            host.common_dialog.savedata.msg = !lang["cancel_loading"].empty() ? lang["cancel_loading"] : "Do you want to cancel saving?";
             break;
         case SCE_SAVEDATA_DIALOG_TYPE_LOAD:
-            host.common_dialog.savedata.msg = "Do you want to cancel loading?";
+            host.common_dialog.savedata.msg = !lang["cancel_saving"].empty() ? lang["cancel_saving"] : "Do you want to cancel loading?";
             break;
         case SCE_SAVEDATA_DIALOG_TYPE_DELETE:
-            host.common_dialog.savedata.msg = "Do you want to cancel deleting?";
+            host.common_dialog.savedata.msg = !lang["cancel_deleting"].empty() ? lang["cancel_deleting"] : "Do you want to cancel deleting?";
             break;
         }
         host.common_dialog.savedata.btn_num = 2;
-        host.common_dialog.savedata.btn[0] = "No";
+        host.common_dialog.savedata.btn[0] = NO;
         host.common_dialog.savedata.btn_val[0] = SCE_SAVEDATA_DIALOG_BUTTON_ID_NO;
-        host.common_dialog.savedata.btn[1] = "Yes";
+        host.common_dialog.savedata.btn[1] = YES;
         host.common_dialog.savedata.btn_val[1] = SCE_SAVEDATA_DIALOG_BUTTON_ID_YES;
         break;
     case SCE_SAVEDATA_DIALOG_SYSMSG_TYPE_FILE_CORRUPTED:
-        host.common_dialog.savedata.msg = "The file is corrupt";
+        host.common_dialog.savedata.msg = !common["file_corrupted"].empty() ? common["file_corrupted"] : "The file is corrupt";
         host.common_dialog.savedata.btn_num = 1;
         host.common_dialog.savedata.btn[0] = "OK";
         host.common_dialog.savedata.btn_val[0] = SCE_SAVEDATA_DIALOG_BUTTON_ID_OK;
         break;
     case SCE_SAVEDATA_DIALOG_SYSMSG_TYPE_NOSPACE_CONTINUABLE:
-        host.common_dialog.savedata.msg = "Could not save the file.\n\
+        host.common_dialog.savedata.msg = !lang["could_not_save"].empty() ? lang["could_not_save"] : "Could not save the file.\n\
 			There is not enough free space on the memory card.";
         host.common_dialog.savedata.btn_num = 1;
         host.common_dialog.savedata.btn[0] = "OK";
@@ -828,6 +840,7 @@ static void handle_sys_message(SceSaveDataDialogSystemMessageParam *sys_message,
         host.common_dialog.savedata.btn[0] = "OK";
         host.common_dialog.savedata.btn_val[0] = SCE_SAVEDATA_DIALOG_BUTTON_ID_OK;
         break;
+    default: break;
     }
 }
 
@@ -943,17 +956,18 @@ EXPORT(int, sceSaveDataDialogContinue, const Ptr<SceSaveDataDialogParam> param) 
             if (progress_bar->msg.get(host.mem) != nullptr) {
                 host.common_dialog.savedata.msg = reinterpret_cast<const char *>(progress_bar->msg.get(host.mem));
             } else {
+                auto lang = host.common_dialog.lang.save_data;
                 switch (progress_bar->sysMsgParam.sysMsgType) {
                 case SCE_SAVEDATA_DIALOG_SYSMSG_TYPE_PROGRESS:
                     switch (host.common_dialog.savedata.display_type) {
                     case SCE_SAVEDATA_DIALOG_TYPE_SAVE:
-                        host.common_dialog.savedata.msg = "Saving...";
+                        host.common_dialog.savedata.msg = !lang["saving"].empty() ? lang["saving"] : "Saving...";
                         break;
                     case SCE_SAVEDATA_DIALOG_TYPE_LOAD:
-                        host.common_dialog.savedata.msg = "Loading...";
+                        host.common_dialog.savedata.msg = !lang["loading"].empty() ? lang["loading"] : "Loading...";
                         break;
                     case SCE_SAVEDATA_DIALOG_TYPE_DELETE:
-                        host.common_dialog.savedata.msg = "Please Wait.";
+                        host.common_dialog.savedata.msg = !host.common_dialog.lang.common["please_wait"].empty() ? host.common_dialog.lang.common["please_wait"] : "Please Wait...";
                         break;
                     }
                     break;
@@ -1121,18 +1135,19 @@ EXPORT(int, sceSaveDataDialogInit, const Ptr<SceSaveDataDialogParam> param) {
         slot_list.resize(list_param->slotListSize);
         initialize_savedata_vectors(host, list_param->slotListSize);
 
-        if (list_param->listTitle.get(host.mem) != nullptr) {
+        if (list_param->listTitle.get(host.mem)) {
             host.common_dialog.savedata.list_title = reinterpret_cast<const char *>(list_param->listTitle.get(host.mem));
         } else {
+            auto lang = host.common_dialog.lang;
             switch (p->dispType) {
             case SCE_SAVEDATA_DIALOG_TYPE_SAVE:
-                host.common_dialog.savedata.list_title = "Save";
+                host.common_dialog.savedata.list_title = !lang.save_data["save"].empty() ? lang.save_data["save"] : "Save";
                 break;
             case SCE_SAVEDATA_DIALOG_TYPE_LOAD:
-                host.common_dialog.savedata.list_title = "Load";
+                host.common_dialog.savedata.list_title = !lang.save_data["load"].empty() ? lang.save_data["load"] : "Load";
                 break;
             case SCE_SAVEDATA_DIALOG_TYPE_DELETE:
-                host.common_dialog.savedata.list_title = "Delete";
+                host.common_dialog.savedata.list_title = !lang.common["delete"].empty() ? lang.common["delete"] : "Delete";
                 break;
             }
         }

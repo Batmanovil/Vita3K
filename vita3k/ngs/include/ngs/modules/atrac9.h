@@ -5,6 +5,13 @@
 #include <codec/state.h>
 
 namespace ngs::atrac9 {
+enum {
+    SCE_NGS_AT9_CALLBACK_REASON_DONE_ALL = 0,
+    SCE_NGS_AT9_CALLBACK_REASON_DONE_ONE_BUFFER = 1,
+    SCE_NGS_AT9_CALLBACK_REASON_START_LOOP = 2,
+    SCE_NGS_AT9_CALLBACK_REASON_DECODE_ERROR = 3
+};
+
 struct BufferParameter {
     Ptr<void> buffer;
     std::int32_t bytes_count;
@@ -38,31 +45,30 @@ struct Parameters {
 };
 
 struct State {
-    std::int32_t current_byte_position_in_buffer;
-    std::int32_t current_buffer;
-    std::int32_t samples_generated_since_key_on;
-    std::int32_t bytes_consumed_since_key_on;
-    std::int32_t total_bytes_consumed;
-    std::int8_t current_loop_count;
+    std::int32_t current_byte_position_in_buffer = 0;
+    std::int32_t current_buffer = 0;
+    std::int32_t samples_generated_since_key_on = 0;
+    std::int32_t bytes_consumed_since_key_on = 0;
+    std::int32_t total_bytes_consumed = 0;
+
+    // INTERNAL
+    std::int8_t current_loop_count = 0;
+    std::uint32_t decoded_samples_pending = 0;
+    std::uint32_t decoded_passed = 0;
 };
 
 struct Module : public ngs::Module {
 private:
     std::unique_ptr<Atrac9DecoderState> decoder;
-
-    PCMChannelBuf decoded_pending;
-    std::uint32_t decoded_samples_pending;
-    std::uint32_t decoded_passed;
+    std::uint32_t last_config;
 
 public:
     explicit Module();
-    void process(const MemState &mem, Voice *voice) override;
-    void get_expectation(AudioDataType *expect_audio_type, std::int16_t *expect_channel_count) override {}
-};
 
-struct VoiceDefinition : public ngs::VoiceDefinition {
-    std::unique_ptr<ngs::Module> new_module() override;
+    void process(KernelState &kern, const MemState &mem, const SceUID thread_id, ModuleData &data) override;
+    std::uint32_t module_id() const override { return 0x5CAA; }
     std::size_t get_buffer_parameter_size() const override;
+    void on_state_change(ModuleData &v, const VoiceState previous) override;
 };
 
 void get_buffer_parameter(std::uint32_t start_sample, std::uint32_t num_samples, std::uint32_t info, SkipBufferInfo &parameter);

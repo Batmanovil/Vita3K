@@ -45,6 +45,7 @@ enum SortState {
 struct App {
     std::string app_ver;
     std::string category;
+    std::string content_id;
     std::string parental_level;
     std::string stitle;
     std::string title;
@@ -126,16 +127,6 @@ enum class TrophyAnimationStage {
     END = 3
 };
 
-struct NoticeInfo {
-    std::string id;
-    std::string group;
-    std::string type;
-    size_t pos;
-    time_t date;
-    std::string name;
-    std::string msg;
-};
-
 enum DateFormat {
     YYYY_MM_DD,
     DD_MM_YYYY,
@@ -161,9 +152,15 @@ struct Lang {
     std::map<std::string, std::string> app_context;
     std::map<std::string, std::string> indicator;
     std::map<std::string, std::string> settings;
+    std::map<std::string, std::string> trophy_collection;
     std::map<std::string, std::string> user_management;
-    std::vector<std::string> wday;
-    std::vector<std::string> ymonth;
+    struct Common {
+        std::vector<std::string> wday;
+        std::vector<std::string> ymonth;
+        std::vector<std::string> small_ymonth;
+        std::map<std::string, std::string> common;
+    };
+    Common common;
 };
 
 struct GuiState {
@@ -203,7 +200,6 @@ struct GuiState {
     std::vector<std::pair<std::string, bool>> modules;
     ImGuiTextFilter module_search_bar;
 
-    bool delete_app_icon = false;
     GLuint display = 0;
 
     ImGuiTextFilter app_search_bar;
@@ -217,10 +213,7 @@ struct GuiState {
     std::vector<ImVec4> theme_backgrounds_font_color;
     std::map<std::string, ImGui_Texture> theme_information_bar_notice;
 
-    std::map<size_t, bool> notice_info_new;
-    int notice_info_count_new = 0;
-    std::vector<NoticeInfo> notice_info;
-    std::map<size_t, ImGui_Texture> notice_info_icon;
+    std::map<time_t, ImGui_Texture> notice_info_icon;
 
     std::uint64_t current_user_bg;
     std::map<std::string, ImGui_Texture> user_backgrounds;

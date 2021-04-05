@@ -56,6 +56,7 @@ struct DisplayState {
 struct HostState {
     std::string app_version;
     std::string app_category;
+    std::string app_content_id;
     std::string app_parental_level;
     std::string app_short_title;
     std::string app_title;
@@ -66,15 +67,16 @@ struct HostState {
     std::string default_path;
     std::wstring pref_path;
     bool load_exec = false;
+    std::string load_app_path;
     std::string load_exec_argv;
-    std::string load_self_path;
+    std::string load_exec_path;
+    std::string self_path;
     Config cfg;
     SceUID main_thread_id;
     size_t frame_count = 0;
     uint32_t sdl_ticks = 0;
     uint32_t fps = 0;
     uint32_t ms_per_frame = 0;
-    bool should_update_window_title = false;
     WindowPtr window = WindowPtr(nullptr, nullptr);
     renderer::Backend backend_renderer;
     RendererPtr renderer;

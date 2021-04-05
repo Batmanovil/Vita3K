@@ -36,6 +36,100 @@
 	<version>Versión</version>
 </app_context>
 
+<common>
+	<cancel>Cancelar</cancel>
+	<delete>Eliminar</delete>
+	<file_corrupted>El archivo está dañado.</file_corrupted>
+	<no>No</no>
+	<select_all>Seleccionar todo</select_all>
+	<select>Seleccionar</select>
+	<please_wait>Espera un momento...</please_wait>
+	<yes>Sí</yes>
+	<wday>
+		<day>domingo</day>
+		<day>lunes</day>
+		<day>martes</day>
+		<day>miércoles</day>
+		<day>jueves</day>
+		<day>viernes</day>
+		<day>sábado</day>
+	</wday>
+	<ymonth>
+		<month>Enero</month>
+		<month>Febrero</month>
+		<month>Marzo</month>
+		<month>Abril</month>
+		<month>Mayo</month>
+		<month>Junio</month>
+		<month>Julio</month>
+		<month>Agosto</month>
+		<month>Septiembre</month>
+		<month>Octubre</month>
+		<month>Noviembre</month>
+		<month>Diciembre</month>
+	</ymonth>
+	<small_ymonth>
+		<month>enero</month>
+		<month>febrero</month>
+		<month>marzo</month>
+		<month>abril</month>
+		<month>mayo</month>
+		<month>junio</month>
+		<month>julio</month>
+		<month>agosto</month>
+		<month>septiembre</month>
+		<month>octubre</month>
+		<month>noviembre</month>
+		<month>diciembre</month>
+	</small_ymonth>
+	<hidden_trophy>Trofeo oculto</hidden_trophy>
+	<one_hour_ago>Hace 1 hora</one_hour_ago>
+	<one_minute_ago>Hace 1 minuto</one_minute_ago>
+	<bronze>Bronce</bronze>
+	<gold>Oro</gold>
+	<platinum>Platino</platinum>
+	<silver>Plata</silver>
+	<hours_ago>Hace {} horas</hours_ago>
+	<minutes_ago>Hace {} minutos</minutes_ago>
+</common>
+
+<dialog>
+	<trophy>
+		<preparing_start_app>Preparándose para iniciar la aplicación...</preparing_start_app>
+	</trophy>
+	<save_data>
+		<delete>
+			<cancel_deleting>¿Quieres cancelar la eliminación?</cancel_deleting> 
+			<deletion_complete>Eliminación completada.</deletion_complete> 
+			<delete_saved_data>¿Quieres eliminar estos datos guardados?</delete_saved_data> 
+		</delete>
+		<info>
+			<details>Detalles</details>
+			<updated>Actualizado</updated>
+		</info>
+		<load name="Cargar">
+			<cancel_loading>¿Quieres cancelar la carga?</cancel_loading>
+			<no_saved_data>No hay datos guardados.</no_saved_data>
+			<load_complete>Carga completada.</load_complete>
+			<loading>Cargando...</loading>
+			<load_saved_data>¿Quieres cargar estos datos guardados?</load_saved_data>
+		</load>
+		<save name="Guardar">
+			<cancel_saving>¿Quieres cancelar el guardado?</cancel_saving>
+			<could_not_save>No se ha podido guardar el archivo.
+No hay suficiente espacio libre en la tarjeta de memoria.</could_not_save>
+			<not_free_space>No hay suficiente espacio libre en la tarjeta de memoria.</not_free_space>
+			<new_saved_data>Nuevos datos guardados</new_saved_data>
+			<saving_complete>Guardado.</saving_complete>
+			<save_the_data>¿Quieres guardar los datos?</save_the_data>
+			<saving>Guardando...</saving>
+			<warning_saving>Guardando...
+No apagues el sistema ni cierres la aplicación.</warning_saving>
+			<overwrite_saved_data>¿Quieres sobrescribir estos datos guardados?</overwrite_saved_data>
+		</save>
+	</save_data>
+</dialog>
+
 <indicator>
 	<app_added_home>La aplicación se ha agregado a la pantalla de inicio.</app_added_home>
 	<delete_all>Eliminar todo</delete_all>
@@ -85,6 +179,21 @@
 	</language>
 </settings>
 
+<trophy_collection>
+	<details>Detalles</details>
+	<earned>Ganado</earned>
+	<name>Nombre</name>
+	<no_trophies>No hay trofeos.
+Podrás conseguir trofeos si usas una aplicación compatible con la función de trofeos.</no_trophies>
+	<not_earned>No ganado</not_earned>
+	<original>Original</original>
+	<sort>Ordenar</sort>
+	<trophies>Trofeos</trophies>
+	<grade>Grado</grade>
+	<progress>Progreso</progress>
+	<updated>Actualizado</updated>
+</trophy_collection>
+
 <user_management>
 	<create_user>Crear usuario</create_user>
 	<edit_user>Modificar usuario</edit_user>
@@ -94,30 +203,3 @@
 	<user>Usuario</user>
 	<confirm>Confirmar</confirm>
 </user_management>
-
-<start>
-	<wday>
-		<day>Domingo</day>
-		<day>Lunes</day>
-		<day>Martes</day>
-		<day>Miercoles</day>
-		<day>Jueves</day>
-		<day>Viernes</day>
-		<day>Sabado</day>
-	</wday>
-
-	<ymonth>
-		<month>Enero</month>
-		<month>Febrero</month>
-		<month>Marzo</month>
-		<month>Abril</month>
-		<month>Mayo</month>
-		<month>Junio</month>
-		<month>Julio</month>
-		<month>Agosto</month>
-		<month>Septiembre</month>
-		<month>Octubre</month>
-		<month>Noviembre</month>
-		<month>Diciembre</month>
-	</ymonth>
-</start>

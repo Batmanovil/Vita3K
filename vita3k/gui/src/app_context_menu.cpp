@@ -33,7 +33,10 @@ void delete_app(GuiState &gui, HostState &host, const std::string &app_path) {
     LOG_INFO_IF(fs::remove_all(APP_PATH), "Application successfully deleted '{} [{}]'.", APP_INDEX->title_id, APP_INDEX->title);
 
     if (!fs::exists(app_path)) {
-        gui.delete_app_icon = true;
+        if (gui.app_selector.user_apps_icon.find(host.app_path) != gui.app_selector.user_apps_icon.end()) {
+            gui.app_selector.user_apps_icon[host.app_path] = {};
+            gui.app_selector.user_apps_icon.erase(host.app_path);
+        }
         gui.app_selector.user_apps.erase(APP_INDEX);
     } else
         LOG_ERROR("Failed to delete '{} [{}]'.", APP_INDEX->title_id, APP_INDEX->title);
@@ -41,9 +44,9 @@ void delete_app(GuiState &gui, HostState &host, const std::string &app_path) {
 
 static std::map<double, std::string> update_history_infos;
 
-static bool get_update_history(GuiState &gui, HostState &host, const std::string &title_id) {
+static bool get_update_history(GuiState &gui, HostState &host, const std::string &app_path) {
     update_history_infos.clear();
-    const auto change_info_path{ fs::path(host.pref_path) / "ux0/app" / title_id / "sce_sys/changeinfo/" };
+    const auto change_info_path{ fs::path(host.pref_path) / "ux0/app" / app_path / "sce_sys/changeinfo/" };
 
     std::string fname = fs::exists(change_info_path / fmt::format("changeinfo_{:0>2d}.xml", host.cfg.sys_lang)) ? fmt::format("changeinfo_{:0>2d}.xml", host.cfg.sys_lang) : "changeinfo.xml";
 
@@ -108,6 +111,7 @@ void draw_app_context_menu(GuiState &gui, HostState &host, const std::string &ap
 
     auto lang = gui.lang.app_context;
     const auto is_lang = !lang.empty();
+    auto common = host.common_dialog.lang.common;
 
     // App Context Menu
     if (ImGui::BeginPopupContextItem("##app_context_menu")) {
@@ -148,7 +152,7 @@ void draw_app_context_menu(GuiState &gui, HostState &host, const std::string &ap
             }
             if (!host.cfg.show_live_area_screen && ImGui::MenuItem("Live Area", nullptr, &gui.live_area.live_area_screen))
                 init_live_area(gui, host);
-            if (ImGui::BeginMenu("Delete")) {
+            if (ImGui::BeginMenu(!common["delete"].empty() ? common["delete"].c_str() : "Delete")) {
                 if (ImGui::MenuItem("Application"))
                     context_dialog = "app";
                 if (fs::exists(DLC_PATH) && ImGui::MenuItem("DLC"))
@@ -161,10 +165,10 @@ void draw_app_context_menu(GuiState &gui, HostState &host, const std::string &ap
                 ImGui::EndMenu();
             }
             if (fs::exists(APP_PATH / "sce_sys/changeinfo/") && ImGui::MenuItem(is_lang ? lang["update_history"].c_str() : "Update History")) {
-                if (get_update_history(gui, host, title_id))
+                if (get_update_history(gui, host, app_path))
                     context_dialog = "history";
                 else
-                    LOG_WARN("Patch note Error for title id: {}", title_id);
+                    LOG_WARN("Patch note Error for title id: {} in path: {}", title_id, app_path);
             }
         }
         if (ImGui::MenuItem(is_lang ? lang["information"].c_str() : "Information", nullptr, &information)) {
@@ -233,13 +237,13 @@ void draw_app_context_menu(GuiState &gui, HostState &host, const std::string &ap
                 ImGui::SetTooltip("Deleting a application may take a while\ndepending on its size and your hardware.");
             ImGui::SetWindowFontScale(1.4f * scal.x);
             ImGui::SetCursorPos(ImVec2((WINDOW_SIZE.x / 2) - (BUTTON_SIZE.x + (20.f * scal.x)), WINDOW_SIZE.y - BUTTON_SIZE.y - (24.0f * scal.y)));
-            if (ImGui::Button("Cancel", BUTTON_SIZE) || ImGui::IsKeyPressed(host.cfg.keyboard_button_circle)) {
+            if (ImGui::Button(!common["cancel"].empty() ? common["cancel"].c_str() : "Cancel", BUTTON_SIZE) || ImGui::IsKeyPressed(host.cfg.keyboard_button_circle)) {
                 context_dialog.clear();
             }
             ImGui::SameLine();
             ImGui::SetCursorPosX((WINDOW_SIZE.x / 2.f) + (20.f * scal.x));
         }
-        if (ImGui::Button("Ok", BUTTON_SIZE) || ImGui::IsKeyPressed(host.cfg.keyboard_button_cross)) {
+        if (ImGui::Button("OK", BUTTON_SIZE) || ImGui::IsKeyPressed(host.cfg.keyboard_button_cross)) {
             if (context_dialog == "app") {
                 fs::remove_all(DLC_PATH);
                 fs::remove_all(SAVE_DATA_PATH);

@@ -4,24 +4,9 @@
 #include <util/log.h>
 
 namespace ngs {
-static int audio_data_type_to_byte_count(AudioDataType data_type) {
-    switch (data_type) {
-    case AudioDataType::F32:
-        return 4;
-
-    case AudioDataType::S16:
-        return 2;
-
-    default:
-        break;
-    }
-
-    return 2;
-}
-
 bool deliver_data(const MemState &mem, Voice *source, const std::uint8_t output_port,
-    const std::uint8_t *output_data) {
-    if (!output_data) {
+    const VoiceProduct &data_to_deliver) {
+    if (!data_to_deliver.data) {
         return false;
     }
 
@@ -32,8 +17,9 @@ bool deliver_data(const MemState &mem, Voice *source, const std::uint8_t output_
             continue;
         }
 
-        if (output_data != nullptr) {
-            patch->dest->inputs.receive(patch, &output_data);
+        if (data_to_deliver.data != nullptr) {
+            const std::lock_guard<std::mutex> guard(*patch->dest->voice_lock);
+            patch->dest->inputs.receive(patch, data_to_deliver);
         }
     }
 

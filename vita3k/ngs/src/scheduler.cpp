@@ -2,10 +2,10 @@
 #include <ngs/system.h>
 
 #include <algorithm>
+#include <cstring>
 
 namespace ngs {
-bool VoiceScheduler::deque_voice(Voice *voice) {
-    const std::lock_guard<std::mutex> guard(lock);
+bool VoiceScheduler::deque_voice_impl(Voice *voice) {
     auto voice_in = std::find(queue.begin(), queue.end(), voice);
 
     if (voice_in == queue.end()) {
@@ -16,14 +16,27 @@ bool VoiceScheduler::deque_voice(Voice *voice) {
     return true;
 }
 
+bool VoiceScheduler::deque_voice(Voice *voice) {
+    if (updater.has_value() && (updater.value() == std::this_thread::get_id())) {
+        pending_deque.push_back(voice);
+        return true;
+    }
+
+    lock.lock();
+    const bool result = deque_voice_impl(voice);
+    lock.unlock();
+
+    return result;
+}
+
 bool VoiceScheduler::play(const MemState &mem, Voice *voice) {
     bool should_enqueue = (voice->state == ngs::VOICE_STATE_PAUSED || voice->state == ngs::VOICE_STATE_AVAILABLE);
 
     // Transition
     if (voice->state == ngs::VOICE_STATE_ACTIVE || voice->state == ngs::VOICE_STATE_PAUSED) {
-        voice->state = ngs::VOICE_STATE_ACTIVE;
+        voice->transition(ngs::VOICE_STATE_ACTIVE);
     } else if (voice->state == ngs::VOICE_STATE_AVAILABLE) {
-        voice->state = ngs::VOICE_STATE_PENDING;
+        voice->transition(ngs::VOICE_STATE_PENDING);
     } else {
         return false;
     }
@@ -62,7 +75,7 @@ bool VoiceScheduler::pause(Voice *voice) {
     }
 
     if (voice->state == ngs::VOICE_STATE_ACTIVE || voice->state == ngs::VOICE_STATE_PENDING) {
-        voice->state = ngs::VOICE_STATE_PAUSED;
+        voice->transition(ngs::VOICE_STATE_PAUSED);
 
         // Remove from the list
         deque_voice(voice);
@@ -73,19 +86,38 @@ bool VoiceScheduler::pause(Voice *voice) {
     return false;
 }
 
+bool VoiceScheduler::resume(const MemState &mem, Voice *voice) {
+    if (voice->state != ngs::VOICE_STATE_PAUSED) {
+        return false;
+    }
+
+    return play(mem, voice);
+}
+
 bool VoiceScheduler::stop(Voice *voice) {
     if (voice->state == ngs::VOICE_STATE_AVAILABLE || voice->state == ngs::VOICE_STATE_FINALIZING) {
         return false;
     }
 
-    voice->state = ngs::VOICE_STATE_AVAILABLE;
+    voice->transition(ngs::VOICE_STATE_AVAILABLE);
     deque_voice(voice);
 
     return true;
 }
 
-void VoiceScheduler::update(const MemState &mem) {
+bool VoiceScheduler::off(Voice *voice) {
+    if (voice->state == ngs::VOICE_STATE_KEY_OFF || voice->state == ngs::VOICE_STATE_FINALIZING) {
+        return false;
+    }
+
+    voice->transition(ngs::VOICE_STATE_KEY_OFF);
+
+    return true;
+}
+
+void VoiceScheduler::update(KernelState &kern, const MemState &mem, const SceUID thread_id) {
     const std::lock_guard<std::mutex> guard(lock);
+    updater = std::this_thread::get_id();
 
     // Do a first routine to clear inputs from previous update session
     for (ngs::Voice *voice : queue) {
@@ -93,9 +125,37 @@ void VoiceScheduler::update(const MemState &mem) {
     }
 
     for (ngs::Voice *voice : queue) {
-        voice->state = ngs::VOICE_STATE_ACTIVE;
-        voice->rack->module->process(mem, voice);
+        // Modify the state, in peace....
+        const std::lock_guard<std::mutex> guard(*voice->voice_lock);
+        std::memset(voice->products, 0, sizeof(voice->products));
+        const auto is_key_off = voice->state == ngs::VOICE_STATE_KEY_OFF;
+
+        if (!is_key_off)
+            voice->transition(ngs::VOICE_STATE_ACTIVE);
+
+        for (std::size_t i = 0; i < voice->rack->modules.size(); i++) {
+            if (voice->rack->modules[i]) {
+                voice->rack->modules[i]->process(kern, mem, thread_id, voice->datas[i]);
+            }
+        }
+
+        if (is_key_off)
+            stop(voice);
+
+        for (std::size_t i = 0; i < voice->rack->vdef->output_count(); i++) {
+            if (voice->products[i].data)
+                deliver_data(mem, voice, static_cast<std::uint8_t>(i), voice->products[i]);
+        }
+
+        voice->frame_count++;
     }
+
+    for (ngs::Voice *nominee : pending_deque) {
+        deque_voice_impl(nominee);
+    }
+
+    pending_deque.clear();
+    updater.reset();
 }
 
 std::int32_t VoiceScheduler::get_position(Voice *v) {

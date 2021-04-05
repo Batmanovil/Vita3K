@@ -23,6 +23,8 @@
 
 #include <io/VitaIoDevice.h>
 
+#include <kernel/functions.h>
+
 #include <util/log.h>
 #include <util/string_utils.h>
 
@@ -35,6 +37,8 @@ bool refresh_app_list(GuiState &gui, HostState &host) {
 
     gui.apps_background.clear();
     gui.apps_list_opened.clear();
+    for (auto &app : gui.app_selector.user_apps_icon)
+        app.second = {};
     gui.app_selector.user_apps_icon.clear();
     gui.current_app_selected = -1;
     gui.live_area_contents.clear();
@@ -93,12 +97,20 @@ void pre_load_app(GuiState &gui, HostState &host, bool live_area, const std::str
 void pre_run_app(GuiState &gui, HostState &host, const std::string &app_path) {
     gui.live_area.live_area_screen = false;
     if (app_path.find("NPXS") == std::string::npos) {
-        host.io.app_path = app_path;
-        if (host.cfg.overwrite_config && (host.cfg.last_app != app_path)) {
-            host.cfg.last_app = app_path;
-            config::serialize_config(host.cfg, host.cfg.config_path);
-        }
         gui.live_area.information_bar = false;
+        if (host.io.app_path != app_path) {
+            if (host.cfg.overwrite_config && (host.cfg.last_app != app_path)) {
+                host.cfg.last_app = app_path;
+                config::serialize_config(host.cfg, host.cfg.config_path);
+            }
+            if (!host.io.app_path.empty()) {
+                stop_all_threads(host.kernel);
+                host.load_app_path = app_path;
+                host.load_exec = true;
+            } else
+                host.io.app_path = app_path;
+        } else
+            gui.live_area.live_area_screen = false;
     } else {
         init_app_background(gui, host, app_path);
 
@@ -118,6 +130,54 @@ inline uint64_t current_time() {
     return std::chrono::duration_cast<std::chrono::seconds>(
         std::chrono::high_resolution_clock::now().time_since_epoch())
         .count();
+}
+
+enum AppRegion {
+    ALL,
+    USA,
+    EURO,
+    JAPAN,
+    ASIA,
+    COMMERCIAL,
+    HOMEBREW,
+};
+
+static AppRegion app_region = ALL;
+static bool app_filter(const std::string &app) {
+    const auto filter_app_region = [&](const std::vector<std::string> &app_region) {
+        const auto app_region_index = std::find_if(app_region.begin(), app_region.end(), [&](const std::string &a) {
+            return app.find(a) != std::string::npos;
+        });
+        return app_region_index == app_region.end();
+    };
+
+    switch (app_region) {
+    case USA:
+        if (filter_app_region({ "PCSA", "PCSE" }))
+            return true;
+        break;
+    case EURO:
+        if (filter_app_region({ "PCSF", "PCSB" }))
+            return true;
+        break;
+    case JAPAN:
+        if (filter_app_region({ "PCSC", "PCSG" }))
+            return true;
+        break;
+    case ASIA:
+        if (filter_app_region({ "PCSD", "PCSH" }))
+            return true;
+        break;
+    case COMMERCIAL:
+        if (filter_app_region({ "PCS" }))
+            return true;
+        break;
+    case HOMEBREW:
+        if (!filter_app_region({ "PCS" }))
+            return true;
+        break;
+    }
+    return false;
 }
 
 static float scroll_type, current_scroll_pos, max_scroll_pos;
@@ -184,12 +244,6 @@ void draw_app_selector(GuiState &gui, HostState &host) {
     else
         ImGui::GetBackgroundDrawList()->AddRectFilled(ImVec2(0.f, MENUBAR_BG_HEIGHT), display_size, IM_COL32(11.f, 90.f, 252.f, 160.f), 0.f, ImDrawCornerFlags_All);
 
-    if (gui.delete_app_icon) {
-        if (gui.app_selector.user_apps_icon.find(host.app_path) != gui.app_selector.user_apps_icon.end())
-            gui.app_selector.user_apps_icon.erase(host.app_path);
-        gui.delete_app_icon = false;
-    }
-
     const float icon_size = static_cast<float>(host.cfg.icon_size);
 
     switch (gui.app_selector.state) {
@@ -205,6 +259,8 @@ void draw_app_selector(GuiState &gui, HostState &host) {
         if (!host.cfg.apps_list_grid) {
             ImGui::Columns(5);
             ImGui::SetColumnWidth(0, icon_size + /* padding */ 20.f);
+            if (ImGui::Button("Filter"))
+                ImGui::OpenPopup("app_filter");
             ImGui::NextColumn();
             switch (gui.app_selector.title_id_sort_state) {
             case ASCENDANT:
@@ -306,6 +362,35 @@ void draw_app_selector(GuiState &gui, HostState &host) {
                 }
             }
             ImGui::NextColumn();
+        } else {
+            if (ImGui::Button("Filter"))
+                ImGui::OpenPopup("app_filter");
+            ImGui::SameLine(0, 20.f);
+        }
+        if (ImGui::BeginPopup("app_filter")) {
+            ImGui::PushStyleColor(ImGuiCol_Text, GUI_COLOR_TEXT);
+            if (ImGui::MenuItem("All", nullptr, app_region == ALL))
+                app_region = ALL;
+            if (ImGui::BeginMenu("By Region")) {
+                if (ImGui::MenuItem("Usa", nullptr, app_region == USA))
+                    app_region = USA;
+                if (ImGui::MenuItem("Euro", nullptr, app_region == EURO))
+                    app_region = EURO;
+                if (ImGui::MenuItem("Japan", nullptr, app_region == JAPAN))
+                    app_region = JAPAN;
+                if (ImGui::MenuItem("Asia", nullptr, app_region == ASIA))
+                    app_region = ASIA;
+                ImGui::EndMenu();
+            }
+            if (ImGui::BeginMenu("By Type")) {
+                if (ImGui::MenuItem("Commercial", nullptr, app_region == COMMERCIAL))
+                    app_region = COMMERCIAL;
+                if (ImGui::MenuItem("Hombrew", nullptr, app_region == HOMEBREW))
+                    app_region = HOMEBREW;
+                ImGui::EndMenu();
+            }
+            ImGui::PopStyleColor();
+            ImGui::EndPopup();
         }
         std::string title_label = "Title";
         switch (gui.app_selector.title_sort_state) {
@@ -394,6 +479,10 @@ void draw_app_selector(GuiState &gui, HostState &host) {
         const auto display_app = [&](const std::vector<gui::App> &apps_list, std::map<std::string, ImGui_Texture> &apps_icon) {
             for (const auto &app : apps_list) {
                 bool selected = false;
+                if (app_region != ALL) {
+                    if ((app.title_id.find("NPXS") == std::string::npos) && app_filter(app.title_id))
+                        continue;
+                }
                 if (!gui.app_search_bar.PassFilter(app.title.c_str()) && !gui.app_search_bar.PassFilter(app.title_id.c_str()))
                     continue;
                 const auto POS_ICON = ImGui::GetCursorPosY();
