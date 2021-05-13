@@ -37,6 +37,7 @@
 
 #include <algorithm>
 #include <nfd.h>
+#include <pugixml.hpp>
 #include <sstream>
 
 namespace gui {
@@ -98,8 +99,11 @@ static void change_emulator_path(GuiState &gui, HostState &host) {
     }
 }
 
+Config::CurrentConfig custom_config;
+
 void get_modules_list(GuiState &gui, HostState &host) {
     gui.modules.clear();
+    auto &lle_modules = gui.configuration_menu.custom_settings_dialog ? custom_config.lle_modules : host.cfg.lle_modules;
 
     const auto modules_path{ fs::path(host.pref_path) / "vs0/sys/external/" };
     if (fs::exists(modules_path) && !fs::is_empty(modules_path)) {
@@ -109,7 +113,7 @@ void get_modules_list(GuiState &gui, HostState &host) {
         }
 
         for (auto &m : gui.modules)
-            m.second = std::find(host.cfg.lle_modules.begin(), host.cfg.lle_modules.end(), m.first) != host.cfg.lle_modules.end();
+            m.second = std::find(lle_modules.begin(), lle_modules.end(), m.first) != lle_modules.end();
 
         std::sort(gui.modules.begin(), gui.modules.end(), [](const auto &ma, const auto &mb) {
             if (ma.second == mb.second)
@@ -119,33 +123,149 @@ void get_modules_list(GuiState &gui, HostState &host) {
     }
 }
 
+CPUBackend config_cpu_backend;
+
+void init_custom_config(GuiState &gui, HostState &host, const std::string &app_path) {
+    const auto is_custom_config = gui.configuration_menu.custom_settings_dialog;
+    if (is_custom_config && !get_custom_config(gui, host, app_path)) {
+        custom_config.cpu_backend = host.cfg.cpu_backend;
+        custom_config.lle_kernel = host.cfg.lle_kernel;
+        custom_config.auto_lle = host.cfg.auto_lle;
+        custom_config.lle_modules = host.cfg.lle_modules;
+        custom_config.disable_ngs = host.cfg.disable_ngs;
+        custom_config.video_playing = host.cfg.video_playing;
+    }
+    const auto cpu_backend = is_custom_config ? custom_config.cpu_backend : host.cfg.cpu_backend;
+    config_cpu_backend = cpu_backend == "Dynarmic" ? CPUBackend::Dynarmic : CPUBackend::Unicorn;
+    get_modules_list(gui, host);
+}
+
+bool get_custom_config(GuiState &gui, HostState &host, const std::string &app_path) {
+    custom_config = {};
+    const auto CUSTOM_CONFIG_PATH{ fs::path(host.base_path) / "config" / fmt::format("config_{}.xml", app_path) };
+
+    if (fs::exists(CUSTOM_CONFIG_PATH)) {
+        pugi::xml_document custum_config_xml;
+        if (custum_config_xml.load_file(CUSTOM_CONFIG_PATH.c_str())) {
+            // Load Core Config
+            if (!custum_config_xml.child("core").empty()) {
+                const auto core_child = custum_config_xml.child("core");
+                custom_config.cpu_backend = core_child.attribute("cpu-backend").as_string();
+                custom_config.lle_kernel = core_child.attribute("lle-kernel").as_bool();
+                custom_config.auto_lle = core_child.attribute("auto-lle").as_bool();
+                for (auto &m : core_child.child("lle-modules"))
+                    custom_config.lle_modules.push_back(m.text().as_string());
+            }
+            // Load Emulator Config
+            if (!custum_config_xml.child("emulator").empty()) {
+                const auto emulator_child = custum_config_xml.child("emulator");
+                custom_config.disable_ngs = emulator_child.attribute("disable-ngs").as_bool();
+                custom_config.video_playing = emulator_child.attribute("video-playing").as_bool();
+            }
+
+            return true;
+        } else {
+            LOG_ERROR("Custrum config XML found is corrupted on path: {}", CUSTOM_CONFIG_PATH.string());
+            fs::remove(CUSTOM_CONFIG_PATH);
+            return false;
+        }
+    }
+
+    return false;
+}
+
+static void save_custom_config(GuiState &gui, HostState &host) {
+    const auto CONFIG_PATH{ fs::path(host.base_path) / "config" };
+    const auto CUSTOM_CONFIG_PATH{ CONFIG_PATH / fmt::format("config_{}.xml", host.app_path) };
+    if (!fs::exists(CONFIG_PATH))
+        fs::create_directory(CONFIG_PATH);
+
+    pugi::xml_document custum_config_xml;
+    auto declarationUser = custum_config_xml.append_child(pugi::node_declaration);
+    declarationUser.append_attribute("version") = "1.0";
+    declarationUser.append_attribute("encoding") = "utf-8";
+
+    // Core
+    auto core_child = custum_config_xml.append_child("core");
+    core_child.append_attribute("cpu-backend") = custom_config.cpu_backend.c_str();
+    core_child.append_attribute("lle-kernel") = custom_config.lle_kernel;
+    core_child.append_attribute("auto-lle") = custom_config.auto_lle;
+    auto enable_module = core_child.append_child("lle-modules");
+    for (const auto &m : custom_config.lle_modules)
+        enable_module.append_child("module").append_child(pugi::node_pcdata).set_value(m.c_str());
+
+    // Emulator
+    auto emulator_child = custum_config_xml.append_child("emulator");
+    emulator_child.append_attribute("disable-ngs") = custom_config.disable_ngs;
+    emulator_child.append_attribute("video-playing") = custom_config.video_playing;
+
+    const auto save_xml = custum_config_xml.save_file(CUSTOM_CONFIG_PATH.c_str());
+    if (!save_xml)
+        LOG_ERROR("Fail save custum config xml for app path: {}, in path: {}", host.app_path, CONFIG_PATH.string());
+}
+
+void set_config(GuiState &gui, HostState &host, const std::string &app_path) {
+    if (get_custom_config(gui, host, app_path)) {
+        host.cfg.current_config.cpu_backend = custom_config.cpu_backend;
+        host.cfg.current_config.lle_kernel = custom_config.lle_kernel;
+        host.cfg.current_config.auto_lle = custom_config.auto_lle;
+        host.cfg.current_config.lle_modules = custom_config.lle_modules;
+        host.cfg.current_config.disable_ngs = custom_config.disable_ngs;
+        host.cfg.current_config.video_playing = custom_config.video_playing;
+    } else {
+        host.cfg.current_config.cpu_backend = host.cfg.cpu_backend;
+        host.cfg.current_config.lle_kernel = host.cfg.lle_kernel;
+        host.cfg.current_config.auto_lle = host.cfg.auto_lle;
+        host.cfg.current_config.lle_modules = host.cfg.lle_modules;
+        host.cfg.current_config.disable_ngs = host.cfg.disable_ngs;
+        host.cfg.current_config.video_playing = host.cfg.video_playing;
+    }
+    // No change it if app already running
+    if (host.io.title_id.empty())
+        host.kernel.cpu_backend = host.cfg.current_config.cpu_backend == "Dynarmic" ? CPUBackend::Dynarmic : CPUBackend::Unicorn;
+}
+
 void draw_settings_dialog(GuiState &gui, HostState &host) {
-    const ImGuiWindowFlags settings_flags = ImGuiWindowFlags_AlwaysAutoResize;
     ImGui::PushStyleColor(ImGuiCol_Text, GUI_COLOR_TEXT_MENUBAR);
-    ImGui::SetNextWindowPos(ImVec2(ImGui::GetIO().DisplaySize.x / 2.f, ImGui::GetIO().DisplaySize.y / 2.f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    ImGui::Begin("Settings", &gui.configuration_menu.settings_dialog, settings_flags);
-    const ImGuiTabBarFlags settings_tab_flags = ImGuiTabBarFlags_None;
-    ImGui::BeginTabBar("SettingsTabBar", settings_tab_flags);
+    ImGui::SetNextWindowPos(ImVec2(ImGui::GetIO().DisplaySize.x / 2.f, ImGui::GetIO().DisplaySize.y / 2.f), ImGuiCond_Always, ImVec2(0.5f, 0.48f));
+    const auto is_custom_config = gui.configuration_menu.custom_settings_dialog;
+    ImGui::Begin(is_custom_config ? ("Custom settings for " + host.app_path).c_str() : "Settings", is_custom_config ? &gui.configuration_menu.custom_settings_dialog : &gui.configuration_menu.settings_dialog, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings);
+    ImGui::BeginTabBar("SettingsTabBar", ImGuiTabBarFlags_None);
     std::ostringstream link;
 
     // Core
     if (ImGui::BeginTabItem("Core")) {
+        auto &cpu_backend = is_custom_config ? custom_config.cpu_backend : host.cfg.cpu_backend;
+        auto &lle_kernel = is_custom_config ? custom_config.lle_kernel : host.cfg.lle_kernel;
+        auto &auto_lle = is_custom_config ? custom_config.auto_lle : host.cfg.auto_lle;
+        auto &lle_modules = is_custom_config ? custom_config.lle_modules : host.cfg.lle_modules;
         ImGui::PopStyleColor();
+        ImGui::Spacing();
+        static const char *LIST_CPU_BACKEND[] = { "Unicorn", "Dynarmic" };
+        ImGui::TextColored(GUI_COLOR_TEXT_TITLE, "Cpu Backend");
+        if (ImGui::Combo("##cpu_backend", reinterpret_cast<int *>(&config_cpu_backend), LIST_CPU_BACKEND, IM_ARRAYSIZE(LIST_CPU_BACKEND)))
+            cpu_backend = LIST_CPU_BACKEND[int(config_cpu_backend)];
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Select your preferred cpu backend.");
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
         if (!gui.modules.empty()) {
+            ImGui::TextColored(GUI_COLOR_TEXT_TITLE, "Module Mode");
             ImGui::Spacing();
-            ImGui::Checkbox("Experimental: LLE libkernel & driver_us", &host.cfg.lle_kernel);
+            ImGui::Checkbox("Experimental: LLE libkernel & driver_us", &lle_kernel);
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Enable this for using libkernel and driver_us module (experimental).");
             ImGui::Spacing();
-            ImGui::TextColored(GUI_COLOR_TEXT_TITLE, "Module Mode");
+            if (ImGui::RadioButton("Automatic", auto_lle))
+                auto_lle = true;
             if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Select Automatic or Manual mode for load modules list.");
-            ImGui::Spacing();
-            if (ImGui::RadioButton("Automatic", host.cfg.auto_lle))
-                host.cfg.auto_lle = true;
+                ImGui::SetTooltip("Select Automatic mode for using modules list pre-set.");
             ImGui::SameLine();
-            if (ImGui::RadioButton("Manual", !host.cfg.auto_lle))
-                host.cfg.auto_lle = false;
+            if (ImGui::RadioButton("Manual", !auto_lle))
+                auto_lle = false;
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Select Manual mode for load custom modules list.");
             ImGui::Spacing();
             ImGui::Separator();
             ImGui::Spacing();
@@ -153,18 +273,18 @@ void draw_settings_dialog(GuiState &gui, HostState &host) {
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Select your desired modules.");
             ImGui::Spacing();
-            ImGui::PushItemWidth(240);
-            if (ImGui::ListBoxHeader("##modules_list", static_cast<int>(gui.modules.size()), 8)) {
+            ImGui::PushItemWidth(240 * host.dpi_scale);
+            if (ImGui::ListBoxHeader("##modules_list", static_cast<int>(gui.modules.size()), 6)) {
                 for (auto &m : gui.modules) {
-                    const auto module = std::find(host.cfg.lle_modules.begin(), host.cfg.lle_modules.end(), m.first);
-                    const bool module_existed = (module != host.cfg.lle_modules.end());
+                    const auto module = std::find(lle_modules.begin(), lle_modules.end(), m.first);
+                    const bool module_existed = (module != lle_modules.end());
                     if (!gui.module_search_bar.PassFilter(m.first.c_str()))
                         continue;
-                    if (ImGui::Selectable(m.first.c_str(), &m.second, host.cfg.auto_lle ? ImGuiSelectableFlags_Disabled : ImGuiSelectableFlags_None)) {
+                    if (ImGui::Selectable(m.first.c_str(), &m.second, auto_lle ? ImGuiSelectableFlags_Disabled : ImGuiSelectableFlags_None)) {
                         if (module_existed)
-                            host.cfg.lle_modules.erase(module);
+                            lle_modules.erase(module);
                         else
-                            host.cfg.lle_modules.push_back(m.first);
+                            lle_modules.push_back(m.first);
                     }
                 }
                 ImGui::ListBoxFooter();
@@ -172,10 +292,10 @@ void draw_settings_dialog(GuiState &gui, HostState &host) {
             ImGui::PopItemWidth();
             ImGui::Spacing();
             ImGui::TextColored(GUI_COLOR_TEXT, "Modules Search");
-            gui.module_search_bar.Draw("##module_search_bar", 200);
+            gui.module_search_bar.Draw("##module_search_bar", 200 * host.dpi_scale);
             ImGui::Spacing();
             if (ImGui::Button("Clear list")) {
-                host.cfg.lle_modules.clear();
+                lle_modules.clear();
                 for (auto &m : gui.modules)
                     m.second = false;
             }
@@ -239,6 +359,13 @@ void draw_settings_dialog(GuiState &gui, HostState &host) {
     if (ImGui::BeginTabItem("Emulator")) {
         ImGui::PopStyleColor();
         ImGui::Spacing();
+        ImGui::Checkbox("Disable experimental ngs support", is_custom_config ? &custom_config.disable_ngs : &host.cfg.disable_ngs);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Disable experimental support for advanced audio library ngs");
+        ImGui::Checkbox("Enable video playing support", is_custom_config ? &custom_config.video_playing : &host.cfg.video_playing);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Uncheck the box to disable video player.\nOn some game, disable it is required for more progress.");
+        ImGui::Spacing();
         if (ImGui::Combo("Log Level", &host.cfg.log_level, "Trace\0Debug\0Info\0Warning\0Error\0Critical\0Off\0"))
             logging::set_level(static_cast<spdlog::level::level_enum>(host.cfg.log_level));
         if (ImGui::IsItemHovered())
@@ -260,12 +387,6 @@ void draw_settings_dialog(GuiState &gui, HostState &host) {
         ImGui::Checkbox("Texture Cache", &host.cfg.texture_cache);
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Uncheck the box to disable texture cache.");
-        ImGui::Checkbox("Disable experimental ngs support", &host.cfg.disable_ngs);
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Disable experimental support for advanced audio library ngs");
-        ImGui::Checkbox("Enable video playing support", &host.cfg.video_playing);
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Uncheck the box to disable video player.\nOn some game, disable it is required for more progress.");
 #ifndef WIN32
         ImGui::Checkbox("Check to enable case-insensitive path finding on case sensitive filesystems. \nRESETS ON RESTART", &host.io.case_isens_find_enabled);
         if (ImGui::IsItemHovered())
@@ -437,6 +558,10 @@ void draw_settings_dialog(GuiState &gui, HostState &host) {
         ImGui::Checkbox("Dump textures", &host.cfg.dump_textures);
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Dump textures to files");
+        ImGui::SameLine();
+        ImGui::Checkbox("Dump elfs", &host.cfg.dump_elfs);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Dump loaded code as elfs");
         ImGui::Spacing();
         if (ImGui::Button(host.kernel.watch_code ? "Unwatch code" : "Watch code")) {
             host.kernel.watch_code = !host.kernel.watch_code;
@@ -462,11 +587,22 @@ void draw_settings_dialog(GuiState &gui, HostState &host) {
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Spacing();
-        static const auto BUTTON_SIZE = ImVec2(60.f, 0.f);
-        ImGui::SetCursorPosX((ImGui::GetWindowSize().x / 2.f) - (BUTTON_SIZE.x / 2.f));
-        if (ImGui::Button("Save", BUTTON_SIZE))
+        static const auto BUTTON_SIZE = ImVec2(60.f * host.dpi_scale, 0.f);
+        if (!host.io.title_id.empty()) {
+            ImGui::SetCursorPosX((ImGui::GetWindowSize().x / 2.f) - BUTTON_SIZE.x - (10.f * host.dpi_scale));
+            if (ImGui::Button("Apply", BUTTON_SIZE))
+                set_config(gui, host, host.app_path);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Click on Apply if you want change setting with app current running.");
+            ImGui::SameLine(0, 20.f * host.dpi_scale);
+        } else
+            ImGui::SetCursorPosX((ImGui::GetWindowSize().x / 2.f) - (BUTTON_SIZE.x / 2.f));
+        if (ImGui::Button("Save", BUTTON_SIZE)) {
             config::serialize_config(host.cfg, host.cfg.config_path);
-        if (ImGui::IsItemHovered())
+            if (is_custom_config)
+                save_custom_config(gui, host);
+        }
+        if (!is_custom_config && ImGui::IsItemHovered())
             ImGui::SetTooltip("Click on Save is required to keep changes after reboot.");
     }
 

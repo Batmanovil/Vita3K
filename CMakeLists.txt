@@ -5,7 +5,6 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-option(USE_GDBSTUB "Build Vita3K with GDB Debugger." OFF)
 option(USE_DISCORD_RICH_PRESENCE "Build Vita3K with Discord Rich Presence" ON)
 option(USE_VULKAN "Build Vita3K with Vulkan backend." OFF)
 
@@ -21,7 +20,7 @@ macro(pre_configure_boost)
 	set (Boost_USE_STATIC_LIBS ON)
 	find_package(Boost COMPONENTS filesystem system program_options QUIET)
 
-	if (Boost_FOUND)
+	if (${Boost_FOUND})
 		set(BOOST_INCLUDEDIR ${Boost_INCLUDE_DIRS})
 		set(BOOST_LIBRARYDIR ${Boost_LIBRARIES})
 	else()
@@ -38,6 +37,14 @@ endmacro(pre_configure_boost)
 
 if(NOT CI)
 	pre_configure_boost()
+endif()
+
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/GetStandard.cmake")
+get_standard_for_build()
+if(${CPP17_SUPPORTED})
+	set(STANDARD_NUM 17)
+else()
+	set(STANDARD_NUM 11)
 endif()
 
 if(WIN32)

@@ -58,7 +58,7 @@ void configure_bound_texture(const SceGxmTexture &gxm_texture) {
     const GLenum format = translate_format(fmt);
     const GLenum type = translate_type(fmt);
     const auto texture_type = gxm_texture.texture_type();
-    const bool is_swizzled = (texture_type == SCE_GXM_TEXTURE_SWIZZLED) || (texture_type == SCE_GXM_TEXTURE_SWIZZLED_ARBITRARY);
+    const bool is_swizzled = (texture_type == SCE_GXM_TEXTURE_SWIZZLED) || (texture_type == SCE_GXM_TEXTURE_CUBE) || (texture_type == SCE_GXM_TEXTURE_SWIZZLED_ARBITRARY) || (texture_type == SCE_GXM_TEXTURE_CUBE_ARBITRARY);
     const auto base_fmt = gxm::get_base_format(fmt);
 
     size_t compressed_size = 0;
@@ -139,7 +139,7 @@ static size_t decompress_compressed_swizz_texture(SceGxmTextureBaseFormat fmt, v
  *
  * \return Void.
  */
-void decompress_packed_float_e5m9m9m9(SceGxmTextureBaseFormat fmt, void *dest, const void *data, const uint32_t width, const uint32_t height) {
+static void decompress_packed_float_e5m9m9m9(SceGxmTextureBaseFormat fmt, void *dest, const void *data, const uint32_t width, const uint32_t height) {
     const uint32_t *in = reinterpret_cast<const uint32_t *>(data);
     uint16_t *out = reinterpret_cast<uint16_t *>(dest);
 
@@ -150,6 +150,36 @@ void decompress_packed_float_e5m9m9m9(SceGxmTextureBaseFormat fmt, void *dest, c
         out[out_offset++] = exponent | ((packed & (0x1FF << 18)) >> 17);
         out[out_offset++] = exponent | ((packed & (0x1FF << 9)) >> 8);
         out[out_offset++] = exponent | ((packed & 0x1FF) << 1);
+    }
+}
+
+static void convert_x8u24_to_u24x8(void *dest, const void *data, const uint32_t width, const uint32_t height, const size_t row_length_in_pixels) {
+    auto dst = static_cast<uint32_t *>(dest);
+    auto src = static_cast<const uint32_t *>(data);
+
+    for (uint32_t row = 0; row < height; ++row) {
+        for (uint32_t col = 0; col < width; ++col) {
+            const uint32_t src_value = src[col];
+            const uint32_t value = (src_value << 8) | (src_value >> 24);
+            *dst++ = value;
+        }
+
+        src += row_length_in_pixels;
+    }
+}
+
+static void convert_f32m_to_f32(void *dest, const void *data, const uint32_t width, const uint32_t height, const size_t row_length_in_pixels) {
+    auto dst = static_cast<uint32_t *>(dest);
+    auto src = static_cast<const uint32_t *>(data);
+
+    for (uint32_t row = 0; row < height; ++row) {
+        for (uint32_t col = 0; col < width; ++col) {
+            const uint32_t src_value = src[col];
+            const uint32_t value = src_value & 0x7FFFFFFF;
+            *dst++ = value;
+        }
+
+        src += row_length_in_pixels;
     }
 }
 
@@ -174,7 +204,8 @@ void upload_bound_texture(const SceGxmTexture &gxm_texture, const MemState &mem)
     size_t bytes_per_pixel = (bpp + 7) >> 3;
 
     const auto texture_type = gxm_texture.texture_type();
-    const bool is_swizzled = (texture_type == SCE_GXM_TEXTURE_SWIZZLED) || (texture_type == SCE_GXM_TEXTURE_SWIZZLED_ARBITRARY);
+    const bool is_ubc = (base_format == SCE_GXM_TEXTURE_BASE_FORMAT_UBC1) || (base_format == SCE_GXM_TEXTURE_BASE_FORMAT_UBC2) || (base_format == SCE_GXM_TEXTURE_BASE_FORMAT_UBC3);
+    const bool is_swizzled = (texture_type == SCE_GXM_TEXTURE_SWIZZLED) || (texture_type == SCE_GXM_TEXTURE_CUBE) || (texture_type == SCE_GXM_TEXTURE_SWIZZLED_ARBITRARY) || (texture_type == SCE_GXM_TEXTURE_CUBE_ARBITRARY);
     const bool need_decompress_and_unswizzle_on_cpu = is_swizzled && !can_texture_be_unswizzled_without_decode(base_format);
 
     uint32_t mip_index = 0;
@@ -206,11 +237,18 @@ void upload_bound_texture(const SceGxmTexture &gxm_texture, const MemState &mem)
 
         switch (texture_type) {
         case SCE_GXM_TEXTURE_SWIZZLED:
+        case SCE_GXM_TEXTURE_CUBE:
         case SCE_GXM_TEXTURE_TILED:
-        case SCE_GXM_TEXTURE_SWIZZLED_ARBITRARY: {
-            if (texture_type == SCE_GXM_TEXTURE_SWIZZLED_ARBITRARY) {
+        case SCE_GXM_TEXTURE_SWIZZLED_ARBITRARY:
+        case SCE_GXM_TEXTURE_CUBE_ARBITRARY: {
+            if ((texture_type == SCE_GXM_TEXTURE_SWIZZLED_ARBITRARY) || (texture_type == SCE_GXM_TEXTURE_CUBE_ARBITRARY)) {
                 width = nearest_power_of_two(width);
                 height = nearest_power_of_two(height);
+            }
+
+            if (is_ubc) {
+                width = align(width, 4);
+                height = align(height, 4);
             }
 
             if (need_decompress_and_unswizzle_on_cpu) {
@@ -222,6 +260,8 @@ void upload_bound_texture(const SceGxmTexture &gxm_texture, const MemState &mem)
                 pixels = texture_data_decompressed.data();
             }
 
+            pixels_per_stride = width;
+
             switch (base_format) {
             case SCE_GXM_TEXTURE_BASE_FORMAT_PVRT2BPP:
             case SCE_GXM_TEXTURE_BASE_FORMAT_PVRT4BPP:
@@ -231,6 +271,19 @@ void upload_bound_texture(const SceGxmTexture &gxm_texture, const MemState &mem)
             case SCE_GXM_TEXTURE_BASE_FORMAT_SE5M9M9M9:
                 texture_data_decompressed.resize(width * height * 6);
                 decompress_packed_float_e5m9m9m9(base_format, texture_data_decompressed.data(), pixels, width, height);
+                pixels = texture_data_decompressed.data();
+                break;
+            case SCE_GXM_TEXTURE_BASE_FORMAT_X8U24:
+                // X8 = [24-31], D24 = [0-23], technically this is GL_UNSIGNED_INT_24_8_REV which does not exist
+                // TODO: Requires shader to convert the normalized value read by GL to unsigned int. Just multiply by 2^24-1 when reading and you're done.
+                texture_data_decompressed.resize(width * height * 4);
+                convert_x8u24_to_u24x8(texture_data_decompressed.data(), pixels, width, height, pixels_per_stride);
+                pixels = texture_data_decompressed.data();
+                break;
+            case SCE_GXM_TEXTURE_BASE_FORMAT_F32M:
+                // Convert F32M to F32
+                texture_data_decompressed.resize(width * height * 4);
+                convert_f32m_to_f32(texture_data_decompressed.data(), pixels, width, height, pixels_per_stride);
                 pixels = texture_data_decompressed.data();
                 break;
             default:
@@ -251,9 +304,7 @@ void upload_bound_texture(const SceGxmTexture &gxm_texture, const MemState &mem)
                 break;
             }
 
-            pixels_per_stride = width;
-
-            if (texture_type == SCE_GXM_TEXTURE_SWIZZLED_ARBITRARY) {
+            if ((texture_type == SCE_GXM_TEXTURE_SWIZZLED_ARBITRARY) || (texture_type == SCE_GXM_TEXTURE_CUBE_ARBITRARY) || is_ubc) {
                 width = org_width;
                 height = org_height;
             }
@@ -305,6 +356,7 @@ void upload_bound_texture(const SceGxmTexture &gxm_texture, const MemState &mem)
             case SCE_GXM_TEXTURE_FORMAT_YVYU422_CSC1:
             case SCE_GXM_TEXTURE_FORMAT_UYVY422_CSC1:
             case SCE_GXM_TEXTURE_FORMAT_VYUY422_CSC1:
+                LOG_ERROR("Yuv Texture format not implemented: {}", fmt);
                 assert(false);
             default:
                 assert(false);
@@ -365,7 +417,7 @@ void dump(const SceGxmTexture &gxm_texture, const MemState &mem, const std::stri
     const SceGxmTextureFormat format = gxm::get_format(&gxm_texture);
     const SceGxmTextureBaseFormat base_format = gxm::get_base_format(format);
 
-    const bool is_swizzled = (gxm_texture.texture_type() == SCE_GXM_TEXTURE_SWIZZLED) || (gxm_texture.texture_type() == SCE_GXM_TEXTURE_SWIZZLED_ARBITRARY);
+    const bool is_swizzled = (gxm_texture.texture_type() == SCE_GXM_TEXTURE_SWIZZLED) || (gxm_texture.texture_type() == SCE_GXM_TEXTURE_CUBE) || (gxm_texture.texture_type() == SCE_GXM_TEXTURE_SWIZZLED_ARBITRARY) || (gxm_texture.texture_type() == SCE_GXM_TEXTURE_CUBE_ARBITRARY);
     const bool need_decompress_and_unswizzle_on_cpu = is_swizzled && !can_texture_be_unswizzled_without_decode(base_format);
 
     size_t bpp = renderer::texture::bits_per_pixel(base_format);

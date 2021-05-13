@@ -18,8 +18,6 @@
 #include <modules/module_parent.h>
 
 #include <cpu/functions.h>
-#include <host/import_fn.h>
-#include <host/import_var.h>
 #include <host/load_self.h>
 #include <host/state.h>
 #include <io/device.h>
@@ -36,9 +34,13 @@
 
 static constexpr bool LOG_UNK_NIDS_ALWAYS = false;
 
+#define LIBRARY(name) extern const LibraryInitFn import_library_init_##name;
+#include <modules/library_init_list.inc>
+#undef LIBRARY
+
 #define VAR_NID(name, nid) extern const ImportVarFactory import_##name;
 #define NID(name, nid) extern const ImportFn import_##name;
-#include <nids/nids.h>
+#include <nids/nids.inc>
 #undef NID
 #undef VAR_NID
 
@@ -50,7 +52,7 @@ static ImportFn resolve_import(uint32_t nid) {
 #define NID(name, nid) \
     case nid:          \
         return import_##name;
-#include <nids/nids.h>
+#include <nids/nids.inc>
 #undef NID
 #undef VAR_NID
     }
@@ -67,7 +69,7 @@ const std::array<VarExport, var_exports_size> &get_var_exports() {
         import_##name,     \
         #name              \
     },
-#include <nids/nids.h>
+#include <nids/nids.inc>
 #undef VAR_NID
 #undef NID
     };
@@ -123,8 +125,6 @@ void call_import(HostState &host, CPUState &cpu, uint32_t nid, SceUID thread_id)
 
     if (!export_pc) {
         // HLE - call our C++ function
-        if (is_returning(cpu))
-            return;
         if (host.kernel.watch_import_calls) {
             const std::unordered_set<uint32_t> hle_nid_blacklist = {
                 0xB295EB61, // sceKernelGetTLSAddr
@@ -154,10 +154,11 @@ void call_import(HostState &host, CPUState &cpu, uint32_t nid, SceUID thread_id)
         stub[2] = encode_arm_inst(INSTRUCTION_BRANCH, 0, 12);
 
         // LLE - directly run ARM code imported from some loaded module
-        if (is_returning(cpu)) {
+        // TODO: resurrect this
+        /*if (is_returning(cpu)) {
             LOG_TRACE("[LLE] TID: {:<3} FUNC: {} returned {}", thread_id, import_name(nid), log_hex(read_reg(cpu, 0)));
             return;
-        }
+        }*/
 
         const std::unordered_set<uint32_t> lle_nid_blacklist = {};
         log_import_call('L', nid, thread_id, lle_nid_blacklist, pc);
@@ -195,18 +196,11 @@ bool load_module(HostState &host, SceSysmoduleModuleId module_id) {
                 LOG_DEBUG("Running module_start of module: {}", module_name);
 
                 Ptr<void> argp = Ptr<void>();
-                auto inject = create_cpu_dep_inject(host);
                 const SceUID module_thread_id = create_thread(lib_entry_point, host.kernel, host.mem, module_name, SCE_KERNEL_DEFAULT_PRIORITY_USER,
-                    static_cast<int>(SCE_KERNEL_STACK_SIZE_USER_DEFAULT), inject, nullptr);
+                    static_cast<int>(SCE_KERNEL_STACK_SIZE_USER_DEFAULT), nullptr);
                 const ThreadStatePtr module_thread = util::find(module_thread_id, host.kernel.threads);
                 const auto ret = run_on_current(*module_thread, lib_entry_point, 0, argp);
-
-                module_thread->to_do = ThreadToDo::exit;
-                module_thread->something_to_do.notify_all(); // TODO Should this be notify_one()?
-
-                const std::lock_guard<std::mutex> lock(host.kernel.mutex);
-                host.kernel.running_threads.erase(module_thread_id);
-                host.kernel.threads.erase(module_thread_id);
+                delete_thread(host.kernel, *module_thread);
                 LOG_INFO("Module {} (at \"{}\") module_start returned {}", module_name, module->path, log_hex(ret));
             }
 
@@ -220,32 +214,8 @@ bool load_module(HostState &host, SceSysmoduleModuleId module_id) {
     return true;
 }
 
-CPUDepInject create_cpu_dep_inject(HostState &host) {
-    const CallImport call_import = [&host](CPUState &cpu, uint32_t nid, SceUID main_thread_id) {
-        ::call_import(host, cpu, nid, main_thread_id);
-    };
-    const ResolveNIDName resolve_nid_name = [&host](Address addr) {
-        return ::resolve_nid_name(host.kernel, addr);
-    };
-    auto get_watch_memory_addr = [&host](Address addr) {
-        return ::get_watch_memory_addr(host.kernel, addr);
-    };
-
-    CPUDepInject inject;
-    inject.call_import = call_import;
-    inject.resolve_nid_name = resolve_nid_name;
-    inject.trace_stack = host.cfg.stack_traceback;
-    inject.get_watch_memory_addr = get_watch_memory_addr;
-    inject.module_regions = host.kernel.module_regions;
-    const CallSVC call_svc = [inject, &host](CPUState &cpu, uint32_t imm, Address pc) {
-        uint32_t nid;
-        if (is_returning(cpu)) {
-            nid = *Ptr<uint32_t>(pc).get(host.mem);
-        } else {
-            nid = *Ptr<uint32_t>(pc + 4).get(host.mem);
-        }
-        inject.call_import(cpu, nid, get_thread_id(cpu));
-    };
-    inject.call_svc = call_svc;
-    return inject;
+void init_libraries(HostState &host) {
+#define LIBRARY(name) import_library_init_##name(host);
+#include <modules/library_init_list.inc>
+#undef LIBRARY
 }

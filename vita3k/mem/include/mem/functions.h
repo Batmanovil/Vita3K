@@ -17,57 +17,15 @@
 
 #pragma once
 
-#include <functional>
-#include <map>
-#include <memory>
-#include <mutex>
-#include <string>
-#include <vector>
+#include <mem/block.h>
+#include <mem/util.h>
 
-typedef uint32_t Address;
-typedef size_t Generation;
-typedef std::unique_ptr<uint8_t[], std::function<void(uint8_t *)>> Memory;
-typedef std::vector<Generation> Allocated;
-typedef std::map<Generation, std::string> GenerationNames;
-
-struct CPUState;
 struct MemState;
-
-typedef void (*BreakpointCallback)(CPUState &, MemState &);
-
-struct Breakpoint {
-    bool gdb;
-    bool thumb_mode;
-    unsigned char data[4];
-    BreakpointCallback callback;
-};
-
-struct MemState {
-    size_t page_size = 0;
-    Generation generation = 0;
-    Memory memory;
-    Allocated allocated_pages;
-    std::mutex generation_mutex;
-    GenerationNames generation_names;
-    std::map<Address, Address> aligned_addr_to_original;
-    std::map<Address, Breakpoint> breakpoints;
-};
-
-constexpr size_t KB(size_t kb) {
-    return kb * 1024;
-}
-
-constexpr size_t MB(size_t mb) {
-    return mb * KB(1024);
-}
-
-constexpr size_t GB(size_t gb) {
-    return gb * MB(1024);
-}
 
 bool init(MemState &state);
 Address alloc(MemState &state, size_t size, const char *name);
 Address alloc(MemState &state, size_t size, const char *name, unsigned int alignment);
+Block alloc_block(MemState &mem, size_t size, const char *name);
 Address alloc_at(MemState &state, Address address, size_t size, const char *name);
 void free(MemState &state, Address address);
 uint32_t mem_available(MemState &state);

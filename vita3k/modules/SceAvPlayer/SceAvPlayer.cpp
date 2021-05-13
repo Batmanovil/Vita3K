@@ -17,6 +17,7 @@
 
 #include "SceAvPlayer.h"
 
+#include <codec/state.h>
 #include <io/functions.h>
 #include <kernel/thread/thread_functions.h>
 #include <util/lock_and_find.h>
@@ -39,6 +40,65 @@ typedef int (*SceAvPlayerReadFile)(void *arguments, uint8_t *buffer, uint64_t of
 typedef uint64_t (*SceAvPlayerGetFileSize)(void *arguments);
 
 typedef void (*SceAvPlayerEventCallback)(void *arguments, int32_t event_id, int32_t source_id, void *event_data);
+
+struct PlayerInfoState;
+typedef std::shared_ptr<PlayerInfoState> PlayerPtr;
+typedef std::map<SceUID, PlayerPtr> PlayerStates;
+
+struct AvPlayerState {
+    std::mutex mutex;
+    PlayerStates players;
+};
+
+struct SceAvPlayerMemoryAllocator {
+    uint32_t user_data;
+
+    // All of these should be cast to SceAvPlayerAllocator or SceAvPlayerDeallocator types.
+    Ptr<void> general_allocator;
+    Ptr<void> general_deallocator;
+    Ptr<void> texture_allocator;
+    Ptr<void> texture_deallocator;
+};
+
+struct SceAvPlayerFileManager {
+    uint32_t user_data;
+
+    // Cast to SceAvPlayerOpenFile, SceAvPlayerCloseFile, SceAvPlayerReadFile and SceAvPlayerGetFileSize.
+    Ptr<void> open_file;
+    Ptr<void> close_file;
+    Ptr<void> read_file;
+    Ptr<void> file_size;
+};
+
+struct SceAvPlayerEventManager {
+    uint32_t user_data;
+
+    // Cast to SceAvPlayerEventCallback.
+    Ptr<void> event_callback;
+};
+
+struct PlayerInfoState {
+    PlayerState player;
+
+    // Framebuffer count is defined in info. I'm being safe now and forcing it to 4 (even though its usually 2).
+    constexpr static uint32_t RING_BUFFER_COUNT = 4;
+
+    uint32_t video_buffer_ring_index = 0;
+    uint32_t video_buffer_size = 0;
+    std::array<Ptr<uint8_t>, RING_BUFFER_COUNT> video_buffer;
+
+    uint32_t audio_buffer_ring_index = 0;
+    uint32_t audio_buffer_size = 0;
+    std::array<Ptr<uint8_t>, RING_BUFFER_COUNT> audio_buffer;
+
+    bool do_loop = false;
+    bool paused = false;
+
+    uint64_t last_frame_time = 0;
+    SceAvPlayerMemoryAllocator memory_allocator;
+    SceAvPlayerFileManager file_manager;
+    SceAvPlayerEventManager event_manager;
+};
 
 enum class DebugLevel {
     NONE,
@@ -174,24 +234,64 @@ uint run_event_callback(HostState &host, SceUID thread_id, const PlayerPtr playe
 }
 //end of callback_thread
 
-EXPORT(int, sceAvPlayerAddSource, SceUID player_handle, const char *path) {
-    const PlayerPtr &player_info = lock_and_find(player_handle, host.kernel.players, host.kernel.mutex);
+EXPORT(int32_t, sceAvPlayerAddSource, SceUID player_handle, Ptr<const char> path) {
+    const auto state = host.kernel.obj_store.get<AvPlayerState>();
+    const PlayerPtr &player_info = lock_and_find(player_handle, state->players, state->mutex);
 
-    player_info->player.queue(expand_path(host.io, path, host.pref_path));
+    auto file_path = expand_path(host.io, path.get(host.mem), host.pref_path);
+    if (!fs::exists(file_path) && player_info->file_manager.open_file && player_info->file_manager.close_file && player_info->file_manager.read_file && player_info->file_manager.file_size) {
+        const auto cache_path{ fs::path(host.base_path) / "cache" };
+        if (!fs::exists(cache_path))
+            fs::create_directories(cache_path);
+
+        // Create temp media file
+        const auto temp_file_path = cache_path / "temp_vita_media.mp4";
+        std::ofstream temp_file(temp_file_path.string(), std::ios::out | std::ios::binary);
+
+        const Address buf = alloc(host.mem, KB(512), "AvPlayer buffer");
+        const auto buf_ptr = Ptr<char>(buf).get(host.mem);
+        const auto thread = lock_and_find(thread_id, host.kernel.threads, host.kernel.mutex);
+        run_callback(host.kernel, *thread, thread_id, player_info->file_manager.open_file.address(), { player_info->file_manager.user_data, path.address() });
+        const uint32_t file_size = run_callback(host.kernel, *thread, thread_id, player_info->file_manager.file_size.address(), { player_info->file_manager.user_data });
+        auto remaining = file_size;
+        uint32_t offset = 0;
+        const Ptr<uint32_t> buf_size_ptr(stack_alloc(*thread->cpu, 4));
+        while (remaining) {
+            const auto buf_size = std::min((uint32_t)KB(512), remaining);
+            *buf_size_ptr.get(host.mem) = buf_size;
+            run_callback(host.kernel, *thread, thread_id, player_info->file_manager.read_file.address(), { player_info->file_manager.user_data, buf, offset, 0 });
+            temp_file.write(buf_ptr, buf_size);
+            offset += buf_size;
+            remaining -= buf_size;
+        }
+        stack_free(*thread->cpu, 4);
+        free(host.mem, buf);
+        temp_file.close();
+        if (fs::file_size(temp_file_path) != file_size) {
+            LOG_ERROR("File is corrupted or incomplete: {}", temp_file_path.string());
+            return -1;
+        }
+        run_callback(host.kernel, *thread, thread_id, player_info->file_manager.close_file.address(), { player_info->file_manager.user_data });
+        file_path = temp_file_path.string();
+    }
+    player_info->player.queue(file_path);
     run_event_callback(host, thread_id, player_info, SCE_AVPLAYER_STATE_BUFFERING, 0, Ptr<void>(0)); //may be important for sound
     run_event_callback(host, thread_id, player_info, SCE_AVPLAYER_STATE_READY, 0, Ptr<void>(0));
     return 0;
 }
 
 EXPORT(int, sceAvPlayerClose, SceUID player_handle) {
-    const PlayerPtr &player_info = lock_and_find(player_handle, host.kernel.players, host.kernel.mutex);
+    const auto state = host.kernel.obj_store.get<AvPlayerState>();
+    const PlayerPtr &player_info = lock_and_find(player_handle, state->players, state->mutex);
     run_event_callback(host, thread_id, player_info, SCE_AVPLAYER_STATE_STOP, 0, Ptr<void>(0));
-    host.kernel.players.erase(player_handle);
+    std::lock_guard<std::mutex> lock(state->mutex);
+    state->players.erase(player_handle);
     return 0;
 }
 
 EXPORT(uint64_t, sceAvPlayerCurrentTime, SceUID player_handle) {
-    const PlayerPtr &player_info = lock_and_find(player_handle, host.kernel.players, host.kernel.mutex);
+    const auto state = host.kernel.obj_store.get<AvPlayerState>();
+    const PlayerPtr &player_info = lock_and_find(player_handle, state->players, state->mutex);
 
     return player_info->player.last_timestamp;
 }
@@ -200,23 +300,24 @@ EXPORT(int, sceAvPlayerDisableStream) {
     return UNIMPLEMENTED();
 }
 
-EXPORT(int, sceAvPlayerStreamCount, SceUID player_handle) {
+EXPORT(int32_t, sceAvPlayerStreamCount, SceUID player_handle) {
     STUBBED("ALWAYS RETURN 2 (VIDEO AND AUDIO)");
     return 2;
 }
 
-EXPORT(int, sceAvPlayerEnableStream, SceUID player_handle, uint32_t stream_no) {
+EXPORT(int32_t, sceAvPlayerEnableStream, SceUID player_handle, uint32_t stream_no) {
     if (player_handle == 0) {
         return SCE_AVPLAYER_ERROR_ILLEGAL_ADDR;
     }
-    if (stream_no > (CALL_EXPORT(sceAvPlayerStreamCount, player_handle))) {
+    if (stream_no > (uint32_t)(CALL_EXPORT(sceAvPlayerStreamCount, player_handle))) {
         return SCE_AVPLAYER_ERROR_INVALID_ARGUMENT;
     }
     return UNIMPLEMENTED();
 }
 
 EXPORT(bool, sceAvPlayerGetAudioData, SceUID player_handle, SceAvPlayerFrameInfo *frame_info) {
-    const PlayerPtr &player_info = lock_and_find(player_handle, host.kernel.players, host.kernel.mutex);
+    const auto state = host.kernel.obj_store.get<AvPlayerState>();
+    const PlayerPtr &player_info = lock_and_find(player_handle, state->players, state->mutex);
 
     Ptr<uint8_t> buffer;
 
@@ -234,7 +335,7 @@ EXPORT(bool, sceAvPlayerGetAudioData, SceUID player_handle, SceAvPlayerFrameInfo
         if (data.empty())
             return false;
 
-        buffer = get_buffer(player_info, MediaType::AUDIO, host.mem, data.size() * sizeof(int16_t), false);
+        buffer = get_buffer(player_info, MediaType::AUDIO, host.mem, (uint32_t)data.size() * sizeof(int16_t), false);
         std::memcpy(buffer.get(host.mem), data.data(), data.size() * sizeof(int16_t));
     }
 
@@ -256,7 +357,8 @@ EXPORT(uint32_t, sceAvPlayerGetStreamInfo, SceUID player_handle, uint stream_no,
         return SCE_AVPLAYER_ERROR_ILLEGAL_ADDR;
     }
     STUBBED("ALWAYS SUSPECTS 2 STREAMS: VIDEO AND AUDIO");
-    const PlayerPtr &player_info = lock_and_find(player_handle, host.kernel.players, host.kernel.mutex);
+    const auto state = host.kernel.obj_store.get<AvPlayerState>();
+    const PlayerPtr &player_info = lock_and_find(player_handle, state->players, state->mutex);
     auto StreamInfo = stream_info.get(host.mem);
     if (stream_no == 0) { //suspect always two streams: audio and video //first is video
         DecoderSize size = player_info->player.get_size();
@@ -279,7 +381,8 @@ EXPORT(uint32_t, sceAvPlayerGetStreamInfo, SceUID player_handle, uint stream_no,
 }
 
 EXPORT(bool, sceAvPlayerGetVideoData, SceUID player_handle, SceAvPlayerFrameInfo *frame_info) {
-    const PlayerPtr &player_info = lock_and_find(player_handle, host.kernel.players, host.kernel.mutex);
+    const auto state = host.kernel.obj_store.get<AvPlayerState>();
+    const PlayerPtr &player_info = lock_and_find(player_handle, state->players, state->mutex);
 
     Ptr<uint8_t> buffer;
 
@@ -327,10 +430,12 @@ EXPORT(bool, sceAvPlayerGetVideoDataEx, SceUID player_handle, SceAvPlayerFrameIn
 }
 
 EXPORT(SceUID, sceAvPlayerInit, SceAvPlayerInfo *info) {
-    if (host.cfg.video_playing) {
+    host.kernel.obj_store.create<AvPlayerState>();
+    if (host.cfg.current_config.video_playing) {
+        const auto state = host.kernel.obj_store.get<AvPlayerState>();
         SceUID player_handle = host.kernel.get_next_uid();
         PlayerPtr player = std::make_shared<PlayerInfoState>();
-        host.kernel.players[player_handle] = player;
+        state->players[player_handle] = player;
 
         LOG_TRACE("SceAvPlayerInfo.memory_allocator: user_data:{}, general_allocator:{}, general_deallocator:{}, texture_allocator:{}, texture_deallocator:{}",
             log_hex(info->memory_allocator.user_data), log_hex(info->memory_allocator.general_allocator.address()), log_hex(info->memory_allocator.general_deallocator.address()),
@@ -357,7 +462,8 @@ EXPORT(SceUID, sceAvPlayerInit, SceAvPlayerInfo *info) {
 }
 
 EXPORT(bool, sceAvPlayerIsActive, SceUID player_handle) {
-    const PlayerPtr &player_info = lock_and_find(player_handle, host.kernel.players, host.kernel.mutex);
+    const auto state = host.kernel.obj_store.get<AvPlayerState>();
+    const PlayerPtr &player_info = lock_and_find(player_handle, state->players, state->mutex);
 
     return !player_info->player.video_playing.empty();
 }
@@ -367,7 +473,8 @@ EXPORT(int, sceAvPlayerJumpToTime) {
 }
 
 EXPORT(int, sceAvPlayerPause, SceUID player_handle) {
-    const PlayerPtr &player_info = lock_and_find(player_handle, host.kernel.players, host.kernel.mutex);
+    const auto state = host.kernel.obj_store.get<AvPlayerState>();
+    const PlayerPtr &player_info = lock_and_find(player_handle, state->players, state->mutex);
     player_info->paused = true;
     run_event_callback(host, thread_id, player_info, SCE_AVPLAYER_STATE_PAUSE, 0, Ptr<void>(0));
     return 0;
@@ -378,7 +485,8 @@ EXPORT(int, sceAvPlayerPostInit) {
 }
 
 EXPORT(int, sceAvPlayerResume, SceUID player_handle) {
-    const PlayerPtr &player_info = lock_and_find(player_handle, host.kernel.players, host.kernel.mutex);
+    const auto state = host.kernel.obj_store.get<AvPlayerState>();
+    const PlayerPtr &player_info = lock_and_find(player_handle, state->players, state->mutex);
     if (!player_info->paused) {
         run_event_callback(host, thread_id, player_info, SCE_AVPLAYER_STATE_PLAY, 0, Ptr<void>(0));
     }
@@ -387,7 +495,8 @@ EXPORT(int, sceAvPlayerResume, SceUID player_handle) {
 }
 
 EXPORT(int, sceAvPlayerSetLooping, SceUID player_handle, bool do_loop) {
-    const PlayerPtr &player_info = lock_and_find(player_handle, host.kernel.players, host.kernel.mutex);
+    const auto state = host.kernel.obj_store.get<AvPlayerState>();
+    const PlayerPtr &player_info = lock_and_find(player_handle, state->players, state->mutex);
     player_info->do_loop = do_loop;
 
     return STUBBED("LOOPING NOT IMPLEMENTED");
@@ -398,7 +507,8 @@ EXPORT(int, sceAvPlayerSetTrickSpeed) {
 }
 
 EXPORT(int, sceAvPlayerStart, SceUID player_handle) {
-    const PlayerPtr &player_info = lock_and_find(player_handle, host.kernel.players, host.kernel.mutex);
+    const auto state = host.kernel.obj_store.get<AvPlayerState>();
+    const PlayerPtr &player_info = lock_and_find(player_handle, state->players, state->mutex);
     if (!player_info->player.videos_queue.empty()) {
         player_info->player.pop_video();
     }
@@ -407,7 +517,8 @@ EXPORT(int, sceAvPlayerStart, SceUID player_handle) {
 }
 
 EXPORT(int, sceAvPlayerStop, SceUID player_handle) {
-    const PlayerPtr &player_info = lock_and_find(player_handle, host.kernel.players, host.kernel.mutex);
+    const auto state = host.kernel.obj_store.get<AvPlayerState>();
+    const PlayerPtr &player_info = lock_and_find(player_handle, state->players, host.kernel.mutex);
     player_info->player.free_video();
     run_event_callback(host, thread_id, player_info, SCE_AVPLAYER_STATE_STOP, 0, Ptr<void>(0));
     return 0;

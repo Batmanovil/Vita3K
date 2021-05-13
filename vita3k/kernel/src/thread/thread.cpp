@@ -19,13 +19,14 @@
 #include <kernel/thread/thread_state.h>
 
 #include <kernel/state.h>
+#include <util/align.h>
 
 #include <kernel/functions.h>
 
 #include <cpu/functions.h>
+#include <cpu/state.h>
 #include <util/find.h>
 #include <util/lock_and_find.h>
-#include <util/resource.h>
 
 #include <SDL_thread.h>
 #include <spdlog/fmt/fmt.h>
@@ -48,39 +49,34 @@ static int SDLCALL thread_function(void *data) {
     const ThreadParams params = *static_cast<const ThreadParams *>(data);
     SDL_SemPost(params.host_may_destroy_params.get());
     const ThreadStatePtr thread = lock_and_find(params.thid, params.kernel->threads, params.kernel->mutex);
-    write_reg(*thread->cpu, 0, params.arglen);
-    write_reg(*thread->cpu, 1, params.argp.address());
     if (params.kernel->wait_for_debugger) {
         thread->to_do = ThreadToDo::wait;
         // Any following threads opened with thread_function will not wait.
         params.kernel->wait_for_debugger = false;
     }
-    const bool succeeded = run_thread(*thread, false);
-    assert(succeeded);
+    const bool succeeded = run_on_current(*thread, Ptr<void>(thread->entry_point), params.arglen, params.argp);
     const uint32_t r0 = read_reg(*thread->cpu, 0);
-
-    const std::lock_guard<std::mutex> lock(thread->mutex);
-
-    for (auto &waiting_thread : thread->waiting_threads) {
-        waiting_thread->to_do = ThreadToDo::run;
-        waiting_thread->something_to_do.notify_all();
+    thread->returned_value = r0;
+    if (thread->to_do == ThreadToDo::exit || thread->to_do == ThreadToDo::exit_delete) {
+        raise_waiting_threads(thread.get());
+        params.kernel->waiting_threads.erase(thread->id);
+    }
+    if (thread->to_do == ThreadToDo::exit_delete) {
+        params.kernel->threads.erase(thread->id);
     }
 
-    thread->waiting_threads.clear();
+    params.kernel->running_threads.erase(thread->id);
 
     return r0;
 }
 
-SceUID create_thread(Ptr<const void> entry_point, KernelState &kernel, MemState &mem, const char *name, int init_priority, int stack_size, CPUDepInject &inject, const SceKernelThreadOptParam *option = nullptr) {
+SceUID create_thread(Ptr<const void> entry_point, KernelState &kernel, MemState &mem, const char *name, int init_priority, int stack_size, const SceKernelThreadOptParam *option = nullptr) {
     SceUID thid = kernel.get_next_uid();
-
-    const ThreadStack::Deleter stack_deleter = [&mem](Address stack) {
-        free(mem, stack);
-    };
 
     const ThreadStatePtr thread = std::make_shared<ThreadState>();
     thread->name = name;
     thread->entry_point = entry_point.address();
+    thread->id = thid;
     // TODO: needs testing
     if (init_priority & (SCE_KERNEL_DEFAULT_PRIORITY & 0xF0000000)) {
         thread->priority = init_priority - SCE_KERNEL_DEFAULT_PRIORITY + SCE_KERNEL_DEFAULT_PRIORITY_USER_INTERNAL;
@@ -89,19 +85,19 @@ SceUID create_thread(Ptr<const void> entry_point, KernelState &kernel, MemState 
     }
     thread->stack_size = stack_size;
     auto alloc_name = fmt::format("Stack for thread {} (#{})", name, thid);
-    thread->stack = std::make_shared<ThreadStack>(alloc(mem, stack_size, alloc_name.c_str()), stack_deleter);
-    const Address stack_top = thread->stack->get() + stack_size;
-    memset(Ptr<void>(thread->stack->get()).get(mem), 0xcc, stack_size);
+    thread->stack = alloc_block(mem, stack_size, alloc_name.c_str());
+    const Address stack_top = thread->stack.get() + stack_size;
+    memset(thread->stack.get_ptr<void>().get(mem), 0xcc, stack_size);
 
-    thread->cpu = init_cpu(thid, entry_point.address(), stack_top, mem, inject);
+    thread->cpu = init_cpu(kernel.cpu_backend, thid, entry_point.address(), stack_top, mem, kernel.cpu_protocol);
     if (!thread->cpu) {
         return SCE_KERNEL_ERROR_ERROR;
     }
     if (kernel.watch_code) {
-        log_code_add(*thread->cpu);
+        set_log_code(*thread->cpu, true);
     }
     if (kernel.watch_memory) {
-        log_mem_add(*thread->cpu);
+        set_log_mem(*thread->cpu, true);
     }
 
     if (option) {
@@ -109,22 +105,20 @@ SceUID create_thread(Ptr<const void> entry_point, KernelState &kernel, MemState 
         write_reg(*thread->cpu, 1, option->size);
     }
 
-    thread->cpu_context = std::make_unique<CPUContext>();
-    if (!thread->cpu_context) {
-        return SCE_KERNEL_ERROR_ERROR;
-    }
-
     alloc_name = fmt::format("TLS for thread {} (#{})", name, thid);
 
-    auto tls_address = alloc(mem, 0x800, alloc_name.c_str()) + 0x800;
+    auto tls_size = kernel_tls_size + (kernel.tls_msize == 0xcccccccc ? 0 : kernel.tls_msize);
+    thread->tls = alloc_block(mem, tls_size, alloc_name.c_str());
+    auto base_tls_address_ptr = thread->tls.get_ptr<uint8_t>();
+    memset(base_tls_address_ptr.get(mem), 0, tls_size);
 
-    write_tpidruro(*thread->cpu, tls_address);
+    auto user_tls_address_ptr = base_tls_address_ptr + kernel_tls_size;
 
-    Ptr<void> tls_address_ptr(tls_address);
-    memset(tls_address_ptr.get(mem), 0, 0x800);
+    write_tpidruro(*thread->cpu, user_tls_address_ptr.address());
+
     if (kernel.tls_address) {
-        assert(kernel.tls_psize <= 0x800 / 4);
-        memcpy(tls_address_ptr.get(mem), kernel.tls_address.get(mem), 4 * kernel.tls_psize);
+        assert((kernel.tls_psize == 0xcccccccc ? 0 : kernel.tls_psize) <= (kernel.tls_msize == 0xcccccccc ? 0 : kernel.tls_msize));
+        memcpy(user_tls_address_ptr.get(mem), kernel.tls_address.get(mem), kernel.tls_psize);
     }
     WaitingThreadState waiting{ name };
 
@@ -143,6 +137,10 @@ void raise_waiting_threads(ThreadState *thread) {
         t->something_to_do.notify_one();
     }
     thread->waiting_threads.clear();
+}
+
+bool is_running(KernelState &kernel, ThreadState &thread) {
+    return kernel.running_threads.find(thread.id) != kernel.running_threads.end();
 }
 
 int start_thread(KernelState &kernel, const SceUID &thid, SceSize arglen, const Ptr<void> &argp) {
@@ -165,19 +163,7 @@ int start_thread(KernelState &kernel, const SceUID &thid, SceSize arglen, const 
     params.arglen = arglen;
     params.argp = argp;
 
-    const std::function<void(SDL_Thread *)> delete_thread = [thread](SDL_Thread *running_thread) {
-        {
-            const std::unique_lock<std::mutex> lock(thread->mutex);
-            thread->to_do = ThreadToDo::exit;
-        }
-        thread->something_to_do.notify_all(); // TODO Should this be notify_one()?
-
-        raise_waiting_threads(thread.get());
-
-        SDL_WaitThread(running_thread, &thread->returned_value);
-    };
-
-    const ThreadPtr running_thread(SDL_CreateThread(&thread_function, waiting->second.name.c_str(), &params), delete_thread);
+    const ThreadPtr running_thread(SDL_CreateThread(&thread_function, waiting->second.name.c_str(), &params), [thread](SDL_Thread *running_thread) {});
     if (!running_thread) {
         return SCE_KERNEL_ERROR_THREAD_ERROR;
     }
@@ -188,65 +174,56 @@ int start_thread(KernelState &kernel, const SceUID &thid, SceSize arglen, const 
     return SCE_KERNEL_OK;
 }
 
-Ptr<void> copy_stack(SceUID thid, SceUID thread_id, const Ptr<void> &argp, KernelState &kernel, MemState &mem) {
-    const ThreadStatePtr new_thread = lock_and_find(thid, kernel.threads, kernel.mutex);
-    const ThreadStatePtr old_thread = lock_and_find(thread_id, kernel.threads, kernel.mutex);
+Ptr<void> copy_block_to_stack(ThreadState &thread, MemState &mem, const Ptr<void> &data, const int size) {
+    const Address stack_top = thread.stack.get() + thread.stack_size;
+    const Address sp = read_sp(*thread.cpu);
+    assert(sp <= stack_top && sp >= thread.stack.get());
+    assert(sp - thread.stack.get() >= size);
+    const int aligned_size = align(size, 8);
+    const Address data_addr = sp - aligned_size;
+    memcpy(Ptr<uint8_t>(data_addr).get(mem), data.get(mem), size);
 
-    const std::unique_lock<std::mutex> lock(kernel.mutex);
+    write_sp(*thread.cpu, data_addr);
 
-    const Address old_stack_address = old_thread->stack->get();
-    const Address new_stack_address = new_thread->stack->get();
-
-    const Address old_sp = read_sp(*old_thread->cpu);
-    const Address old_stack_size = old_stack_address + old_thread->stack_size - old_sp;
-    const Address new_sp = new_stack_address + new_thread->stack_size - old_stack_size;
-
-    memcpy(Ptr<void>(new_sp).get(mem), Ptr<void>(old_sp).get(mem), old_stack_size);
-    write_sp(*new_thread->cpu, new_sp);
-
-    Ptr<void> new_argp = argp;
-    if (old_stack_address < argp.address() && (old_stack_address + old_thread->stack_size > argp.address())) {
-        const Address offset = old_stack_address + old_thread->stack_size - argp.address();
-        new_argp = Ptr<void>(new_stack_address + new_thread->stack_size - offset);
-    }
-    return new_argp;
+    return Ptr<void>(data_addr);
 }
 
-bool run_thread(ThreadState &thread, bool callback) {
+static bool run_thread(ThreadState &thread) {
     int res = 0;
     std::unique_lock<std::mutex> lock(thread.mutex);
     while (true) {
         switch (thread.to_do) {
+        case ThreadToDo::exit_delete:
         case ThreadToDo::exit:
             return true;
         case ThreadToDo::run:
         case ThreadToDo::step:
             lock.unlock();
             if (thread.to_do == ThreadToDo::step) {
-                res = step(*thread.cpu, callback, thread.entry_point);
+                res = step(*thread.cpu);
                 thread.to_do = ThreadToDo::wait;
+
             } else
-                res = run(*thread.cpu, callback, thread.entry_point);
-#ifdef USE_GDBSTUB
-            if (hit_breakpoint(*thread.cpu)) {
-                thread.to_do = ThreadToDo::wait;
-                LOG_INFO("Stopping thread \"{}\" at breakpoint.", thread.name);
-            }
-#endif
+                res = run(*thread.cpu);
+
+            if (thread.to_do == ThreadToDo::exit || thread.to_do == ThreadToDo::exit_delete)
+                return true;
+
             if (res < 0) {
                 LOG_ERROR("Thread {} experienced a unicorn error.", thread.name);
-                return false;
-            }
-            if (callback) {
                 return true;
             }
+
+            if (hit_breakpoint(*thread.cpu)) {
+                thread.to_do = ThreadToDo::wait;
+            }
+
             if (res == 1) {
-                const std::unique_lock<std::mutex> lock(thread.mutex);
-                raise_waiting_threads(&thread);
                 thread.to_do = ThreadToDo::exit;
                 return true;
             }
             lock.lock();
+
             break;
         case ThreadToDo::wait:
             thread.something_to_do.wait(lock);
@@ -266,10 +243,9 @@ int run_callback(KernelState &kernel, ThreadState &thread, const SceUID &thid, A
         LOG_TRACE("Got a cpu from CPU pool after a wait");
     auto cpu = cpu_item.get();
 
-    CPUContext ctx;
-    save_context(*thread.cpu, ctx);
+    CPUContext ctx = save_context(*thread.cpu);
     load_context(*cpu, ctx);
-    write_tpidruro(*cpu, read_tpidruro(*thread.cpu)); //TLS
+    write_tpidruro(*cpu, read_tpidruro(*thread.cpu));
 
     assert(args.size() <= 4);
     for (int i = 0; i < args.size(); i++) {
@@ -278,10 +254,12 @@ int run_callback(KernelState &kernel, ThreadState &thread, const SceUID &thid, A
     // TODO: remaining arguments should be pushed into stack
     set_thread_id(*cpu, thid);
     write_pc(*cpu, callback_address);
-    CPUStatePtr old_thread_cpu = CPUStatePtr(cpu, [](CPUState *state) -> void {});
-    old_thread_cpu.swap(thread.cpu);
-    auto res = run(*cpu, true, callback_address);
-    thread.cpu.swap(old_thread_cpu);
+    write_lr(*cpu, cpu->halt_instruction_pc);
+    CPUStatePtr cpu_ptr = CPUStatePtr(cpu, [](CPUState *state) -> void {});
+    thread.cpu.swap(cpu_ptr);
+    auto res = run(*cpu);
+    thread.cpu.swap(cpu_ptr);
+
     if (res < 0) {
         LOG_ERROR("Thread {} experienced a unicorn error.", thread.name);
         return -1;
@@ -289,13 +267,67 @@ int run_callback(KernelState &kernel, ThreadState &thread, const SceUID &thid, A
     return read_reg(*cpu, 0);
 }
 
-uint32_t run_on_current(ThreadState &thread, const Ptr<const void> entry_point, SceSize arglen, const Ptr<void> &argp, bool callback) {
-    std::unique_lock<std::mutex> lock(thread.mutex);
-    stop(*thread.cpu);
+uint32_t run_on_current(ThreadState &thread, const Ptr<const void> entry_point, SceSize arglen, const Ptr<void> &argp) {
+    CPUContext ctx = save_context(*thread.cpu);
+    auto tpidruro = read_tpidruro(*thread.cpu);
+
     write_reg(*thread.cpu, 0, arglen);
     write_reg(*thread.cpu, 1, argp.address());
     write_pc(*thread.cpu, entry_point.address());
-    lock.unlock();
-    run_thread(thread, callback);
-    return read_reg(*thread.cpu, 0);
+    write_lr(*thread.cpu, thread.cpu->halt_instruction_pc);
+    set_thread_id(*thread.cpu, thread.id);
+
+    run_thread(thread);
+    auto out = read_reg(*thread.cpu, 0);
+
+    load_context(*thread.cpu, ctx);
+    write_tpidruro(*thread.cpu, tpidruro);
+    return out;
+}
+
+void exit_thread(ThreadState &thread) {
+    const auto last_to_do = thread.to_do;
+    thread.to_do = ThreadToDo::exit;
+    if (last_to_do == ThreadToDo::wait) {
+        std::lock_guard<std::mutex> lock(thread.mutex);
+        thread.something_to_do.notify_one();
+    } else if (last_to_do == ThreadToDo::run) {
+        stop(*thread.cpu);
+    }
+}
+
+void exit_and_delete_thread(ThreadState &thread) {
+    const auto last_to_do = thread.to_do;
+    thread.to_do = ThreadToDo::exit_delete;
+    if (last_to_do == ThreadToDo::wait) {
+        std::lock_guard<std::mutex> lock(thread.mutex);
+        thread.something_to_do.notify_one();
+    } else if (last_to_do == ThreadToDo::run) {
+        stop(*thread.cpu);
+    }
+}
+
+void delete_thread(KernelState &kernel, ThreadState &thread) {
+    kernel.waiting_threads.erase(thread.id);
+    kernel.threads.erase(thread.id);
+}
+
+int wait_thread_end(ThreadStatePtr &waiter, ThreadStatePtr &target, int *stat) {
+    const std::lock_guard<std::mutex> waiter_lock(waiter->mutex);
+
+    {
+        const std::lock_guard<std::mutex> thread_lock(target->mutex);
+
+        if (target->to_do == ThreadToDo::exit) {
+            if (stat != nullptr) {
+                *stat = target->returned_value;
+            }
+            return 0;
+        }
+
+        target->waiting_threads.push_back(waiter);
+    }
+    waiter->to_do = ThreadToDo::wait;
+    stop(*waiter->cpu);
+    return 0;
 }

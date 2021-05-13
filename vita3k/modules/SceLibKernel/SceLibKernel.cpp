@@ -35,7 +35,6 @@
 #include <rtc/rtc.h>
 #include <util/lock_and_find.h>
 #include <util/log.h>
-#include <util/resource.h>
 
 #include <algorithm>
 #include <cstdlib>
@@ -398,7 +397,7 @@ EXPORT(int, sceIoGetstatAsync) {
 }
 
 EXPORT(int, sceIoGetstatByFd, const SceUID fd, SceIoStat *stat) {
-    return stat_file_by_fd(host.io, fd, stat, host.pref_path, host.kernel.base_tick.tick, export_name);
+    return stat_file_by_fd(host.io, fd, stat, host.pref_path, export_name);
 }
 
 EXPORT(int, sceIoIoctl) {
@@ -896,8 +895,8 @@ EXPORT(int, sceKernelCreateLwMutex, Ptr<SceKernelLwMutexWork> workarea, const ch
     return CALL_EXPORT(_sceKernelCreateLwMutex, workarea, name, attr, init_count, opt_param);
 }
 
-EXPORT(int, sceKernelCreateMsgPipe) {
-    return UNIMPLEMENTED();
+EXPORT(int, sceKernelCreateMsgPipe, const char *name, uint32_t type, uint32_t attr, SceSize bufSize, const SceKernelCreateMsgPipeOpt *opt) {
+    return msgpipe_create(host.kernel, export_name, name, thread_id, attr);
 }
 
 EXPORT(int, sceKernelCreateMsgPipeWithLR) {
@@ -1164,7 +1163,7 @@ EXPORT(int, sceKernelGetThreadInfo, SceUID thid, SceKernelThreadInfo *info) {
     const ThreadStatePtr thread = lock_and_find(thid ? thid : thread_id, host.kernel.threads, host.kernel.mutex);
 
     strncpy(info->name, thread->name.c_str(), 0x1f);
-    info->stack = Ptr<void>(thread->stack->get());
+    info->stack = Ptr<void>(thread->stack.get());
     info->stackSize = thread->stack_size;
     info->initPriority = thread->priority;
     info->currentPriority = thread->priority;
@@ -1338,8 +1337,15 @@ EXPORT(int, sceKernelPulseEventWithNotifyCallback) {
     return UNIMPLEMENTED();
 }
 
-EXPORT(int, sceKernelReceiveMsgPipe) {
-    return UNIMPLEMENTED();
+EXPORT(int, sceKernelReceiveMsgPipe, SceUID msgpipe_id, char *recv_buf, SceSize msg_size, SceUInt32 wait_mode, SceSize *result, SceUInt32 *timeout) {
+    const auto ret = msgpipe_recv(host.kernel, export_name, thread_id, msgpipe_id, wait_mode, recv_buf, msg_size, timeout);
+    if (ret < 0) {
+        return ret;
+    }
+    if (result) {
+        *result = ret;
+    }
+    return SCE_KERNEL_OK;
 }
 
 EXPORT(int, sceKernelReceiveMsgPipeCB) {
@@ -1358,8 +1364,15 @@ EXPORT(int, sceKernelRegisterThreadEventHandler) {
     return UNIMPLEMENTED();
 }
 
-EXPORT(int, sceKernelSendMsgPipe) {
-    return UNIMPLEMENTED();
+EXPORT(int, sceKernelSendMsgPipe, SceUID msgpipe_id, char *send_buf, SceSize msg_size, SceUInt32 wait_mode, SceSize *result, SceUInt32 *timeout) {
+    const auto ret = msgpipe_send(host.kernel, export_name, thread_id, msgpipe_id, wait_mode, send_buf, msg_size, timeout);
+    if (ret < 0) {
+        return ret;
+    }
+    if (result) {
+        *result = ret;
+    }
+    return SCE_KERNEL_OK;
 }
 
 EXPORT(int, sceKernelSendMsgPipeCB) {
@@ -1444,8 +1457,15 @@ EXPORT(int, sceKernelTryLockLwMutex, Ptr<SceKernelLwMutexWork> workarea, int loc
     return mutex_try_lock(host.kernel, host.mem, export_name, thread_id, lwmutexid, lock_count, SyncWeight::Light);
 }
 
-EXPORT(int, sceKernelTryReceiveMsgPipe) {
-    return UNIMPLEMENTED();
+EXPORT(int, sceKernelTryReceiveMsgPipe, SceUID msgpipe_id, char *recv_buf, SceSize msg_size, SceUInt32 wait_mode, SceSize *result) {
+    const auto ret = msgpipe_recv(host.kernel, export_name, thread_id, msgpipe_id, wait_mode | SCE_KERNEL_MSG_PIPE_MODE_DONT_WAIT, recv_buf, msg_size, 0);
+    if (ret == 0) {
+        return SCE_KERNEL_ERROR_MPP_EMPTY;
+    }
+    if (result) {
+        *result = ret;
+    }
+    return SCE_KERNEL_OK;
 }
 
 EXPORT(int, sceKernelTryReceiveMsgPipeVector) {

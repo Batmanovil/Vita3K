@@ -377,15 +377,12 @@ GLenum translate_type(SceGxmTextureFormat format) {
     case SCE_GXM_TEXTURE_BASE_FORMAT_F16F16:
         return GL_HALF_FLOAT;
     case SCE_GXM_TEXTURE_BASE_FORMAT_F32:
-        return GL_FLOAT;
     case SCE_GXM_TEXTURE_BASE_FORMAT_F32M:
-        LOG_WARN("Unhandled base format SCE_GXM_TEXTURE_BASE_FORMAT_F32M");
         return GL_FLOAT;
     case SCE_GXM_TEXTURE_BASE_FORMAT_X8S8S8U8:
         LOG_WARN("Unhandled base format SCE_GXM_TEXTURE_BASE_FORMAT_X8S8S8U8");
         return GL_UNSIGNED_INT_8_8_8_8_REV;
     case SCE_GXM_TEXTURE_BASE_FORMAT_X8U24:
-        LOG_WARN("Unhandled base format SCE_GXM_TEXTURE_BASE_FORMAT_X8U24");
         return GL_UNSIGNED_INT_24_8;
     case SCE_GXM_TEXTURE_BASE_FORMAT_U32:
         return GL_UNSIGNED_INT;
@@ -396,7 +393,7 @@ GLenum translate_type(SceGxmTextureFormat format) {
         return GL_HALF_FLOAT;
     case SCE_GXM_TEXTURE_BASE_FORMAT_F11F11F10:
         LOG_WARN("Unhandled base format SCE_GXM_TEXTURE_BASE_FORMAT_F11F11F10");
-        return GL_UNSIGNED_INT_2_10_10_10_REV;
+        return GL_UNSIGNED_INT_10F_11F_11F_REV;
     case SCE_GXM_TEXTURE_BASE_FORMAT_F16F16F16F16:
         return GL_HALF_FLOAT;
     case SCE_GXM_TEXTURE_BASE_FORMAT_U16U16U16U16:
@@ -527,6 +524,8 @@ GLenum translate_wrap_mode(SceGxmTextureAddrMode src) {
     switch (src) {
     case SCE_GXM_TEXTURE_ADDR_REPEAT:
         return GL_REPEAT;
+    case SCE_GXM_TEXTURE_ADDR_MIRROR:
+        return GL_MIRRORED_REPEAT;
     case SCE_GXM_TEXTURE_ADDR_CLAMP:
         return GL_CLAMP_TO_EDGE;
     case SCE_GXM_TEXTURE_ADDR_MIRROR_CLAMP:

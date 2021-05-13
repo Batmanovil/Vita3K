@@ -23,7 +23,7 @@
 #include <gui/imgui_impl_sdl.h>
 #include <host/state.h>
 #include <io/functions.h>
-#include <mem/mem.h>
+#include <kernel/functions.h>
 #include <nids/functions.h>
 #include <renderer/functions.h>
 #include <rtc/rtc.h>
@@ -36,9 +36,7 @@
 #include <app/discord.h>
 #endif
 
-#ifdef USE_GDBSTUB
 #include <gdbstub/functions.h>
-#endif
 
 #ifdef USE_VULKAN
 #include <renderer/vulkan/functions.h>
@@ -94,7 +92,7 @@ void update_viewport(HostState &state) {
     }
 }
 
-bool init(HostState &state, Config &cfg, const Root &root_paths, CPUDepInject inject) {
+bool init(HostState &state, Config &cfg, const Root &root_paths) {
     const ResumeAudioThread resume_thread = [&state](SceUID thread_id) {
         const auto thread = lock_and_find(thread_id, state.kernel.threads, state.kernel.mutex);
         const std::lock_guard<std::mutex> lock(thread->mutex);
@@ -118,6 +116,8 @@ bool init(HostState &state, Config &cfg, const Root &root_paths, CPUDepInject in
             state.cfg.pref_path += '/';
         state.pref_path = string_utils::utf_to_wide(state.cfg.pref_path);
     }
+
+    state.kernel.cpu_backend = state.cfg.cpu_backend == "Dynarmic" ? CPUBackend::Dynarmic : CPUBackend::Unicorn;
 
 #ifdef USE_VULKAN
     if (string_utils::toupper(state.cfg.backend_renderer) == "VULKAN")
@@ -145,7 +145,14 @@ bool init(HostState &state, Config &cfg, const Root &root_paths, CPUDepInject in
         state.display.fullscreen = true;
         window_type |= SDL_WINDOW_FULLSCREEN_DESKTOP;
     }
-    state.window = WindowPtr(SDL_CreateWindow(window_title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, DEFAULT_RES_WIDTH, DEFAULT_RES_HEIGHT, window_type | SDL_WINDOW_RESIZABLE), SDL_DestroyWindow);
+#ifdef WIN32
+    float ddpi, hdpi, vdpi;
+    SDL_GetDisplayDPI(0, &ddpi, &hdpi, &vdpi);
+    state.dpi_scale = ddpi / 96;
+#endif
+    state.res_width_dpi_scale = DEFAULT_RES_WIDTH * state.dpi_scale;
+    state.res_height_dpi_scale = DEFAULT_RES_HEIGHT * state.dpi_scale;
+    state.window = WindowPtr(SDL_CreateWindow(window_title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, state.res_width_dpi_scale, state.res_height_dpi_scale, window_type | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI), SDL_DestroyWindow);
 
     if (!state.window) {
         LOG_ERROR("SDL failed to create window!");
@@ -154,6 +161,11 @@ bool init(HostState &state, Config &cfg, const Root &root_paths, CPUDepInject in
 
     if (!init(state.mem)) {
         LOG_ERROR("Failed to initialize memory for emulator state!");
+        return false;
+    }
+
+    if (!init(state.kernel, state.mem, cfg.cpu_pool_size, state.cpu_protocol.get(), state.kernel.cpu_backend)) {
+        LOG_WARN("Failed to init kernel!");
         return false;
     }
 
@@ -176,14 +188,6 @@ bool init(HostState &state, Config &cfg, const Root &root_paths, CPUDepInject in
         discordrpc::update_presence();
     }
 #endif
-
-    for (int i = 0; i < cfg.cpu_pool_size; ++i) {
-        auto item = init_cpu(0, 0, 0, state.mem, inject);
-        state.kernel.cpu_pool.add(std::move(item));
-    }
-
-    state.kernel.start_tick = { rtc_base_ticks() };
-    state.kernel.base_tick = { rtc_base_ticks() };
 
     if (!cfg.console) {
         if (renderer::init(state.window.get(), state.renderer, state.backend_renderer)) {
@@ -224,9 +228,8 @@ void destroy(HostState &host, ImGui_State *imgui) {
     discordrpc::shutdown();
 #endif
 
-#ifdef USE_GDBSTUB
-    server_close(host);
-#endif
+    if (host.cfg.gdbstub)
+        server_close(host);
 
     // There may be changes that made in the GUI, so we should save, again
     if (host.cfg.overwrite_config)

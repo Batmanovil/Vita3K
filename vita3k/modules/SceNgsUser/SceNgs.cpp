@@ -62,6 +62,7 @@ static_assert(sizeof(SceNgsPatchDeliveryInfo) == 20);
 static constexpr SceUInt32 SCE_NGS_OK = 0;
 static constexpr SceUInt32 SCE_NGS_ERROR = 0x804A0001;
 static constexpr SceUInt32 SCE_NGS_ERROR_INVALID_ARG = 0x804A0002;
+static constexpr SceUInt32 SCE_NGS_ERROR_INVALID_STATE = 0x804A0010;
 static constexpr SceUInt32 SCE_NGS_SIZE_MISMATCH = 0x804A000D;
 
 static constexpr SceUInt32 SCE_NGS_VOICE_STATE_AVAILABLE = 0;
@@ -73,7 +74,7 @@ static constexpr SceUInt32 SCE_NGS_VOICE_STATE_PAUSED = 1 << 5;
 static constexpr SceUInt32 SCE_NGS_VOICE_STATE_KEY_OFF = 1 << 6;
 
 EXPORT(int, sceNgsAT9GetSectionDetails, const std::uint32_t samples_start, const std::uint32_t num_samples, const std::uint32_t config_data, ngs::atrac9::SkipBufferInfo *info) {
-    if (host.cfg.disable_ngs) {
+    if (host.cfg.current_config.disable_ngs) {
         return -1;
     }
     // Check magic!
@@ -94,7 +95,7 @@ EXPORT(int, sceNgsModuleGetPreset) {
 }
 
 EXPORT(int, sceNgsPatchCreateRouting, ngs::PatchSetupInfo *patch_info, SceNgsPatchHandle *handle) {
-    if (host.cfg.disable_ngs) {
+    if (host.cfg.current_config.disable_ngs) {
         return 0;
     }
     assert(handle);
@@ -118,17 +119,22 @@ EXPORT(int, sceNgsPatchCreateRouting, ngs::PatchSetupInfo *patch_info, SceNgsPat
     return SCE_NGS_OK;
 }
 
-EXPORT(int, sceNgsPatchGetInfo, SceNgsPatchHandle patch_handle, SceNgsPatchAudioPropInfo *prop_info, SceNgsPatchDeliveryInfo *deli_info) {
+EXPORT(SceInt32, sceNgsPatchGetInfo, SceNgsPatchHandle patch_handle, SceNgsPatchAudioPropInfo *prop_info, SceNgsPatchDeliveryInfo *deli_info) {
+    // Always stereo
+    if (prop_info) {
+        prop_info->in_channels = 2;
+        prop_info->out_channels = 2;
+    }
+
+    if (host.cfg.current_config.disable_ngs)
+        return SCE_NGS_OK;
+
     ngs::Patch *patch = patch_handle.get(host.mem);
     if (!patch) {
         return RET_ERROR(SCE_NGS_ERROR_INVALID_ARG);
     }
 
-    // Always stereo
     if (prop_info) {
-        prop_info->in_channels = 2;
-        prop_info->out_channels = 2;
-
         prop_info->volume_matrix.matrix[0][0] = patch->volume_matrix[0][0];
         prop_info->volume_matrix.matrix[0][1] = patch->volume_matrix[0][1];
         prop_info->volume_matrix.matrix[1][0] = patch->volume_matrix[1][0];
@@ -143,11 +149,11 @@ EXPORT(int, sceNgsPatchGetInfo, SceNgsPatchHandle patch_handle, SceNgsPatchAudio
         deli_info->dest_voice_handle = Ptr<ngs::Voice>(patch->dest, host.mem);
     }
 
-    return 0;
+    return SCE_NGS_OK;
 }
 
 EXPORT(int, sceNgsPatchRemoveRouting, SceNgsPatchHandle patch_handle) {
-    if (host.cfg.disable_ngs) {
+    if (host.cfg.current_config.disable_ngs) {
         return 0;
     }
 
@@ -165,7 +171,7 @@ EXPORT(int, sceNgsPatchRemoveRouting, SceNgsPatchHandle patch_handle) {
 }
 
 EXPORT(int, sceNgsRackGetRequiredMemorySize, SceNgsSynthSystemHandle sys_handle, ngs::RackDescription *description, uint32_t *size) {
-    if (host.cfg.disable_ngs) {
+    if (host.cfg.current_config.disable_ngs) {
         *size = 1;
         return 0;
     }
@@ -175,7 +181,7 @@ EXPORT(int, sceNgsRackGetRequiredMemorySize, SceNgsSynthSystemHandle sys_handle,
 }
 
 EXPORT(SceUInt32, sceNgsRackGetVoiceHandle, SceNgsRackHandle rack_handle, const std::uint32_t index, SceNgsVoiceHandle *voice_handle) {
-    if (host.cfg.disable_ngs) {
+    if (host.cfg.current_config.disable_ngs) {
         return 0;
     }
     ngs::Rack *rack = rack_handle.get(host.mem);
@@ -193,7 +199,7 @@ EXPORT(SceUInt32, sceNgsRackGetVoiceHandle, SceNgsRackHandle rack_handle, const 
 }
 
 EXPORT(SceUInt32, sceNgsRackInit, SceNgsSynthSystemHandle sys_handle, ngs::BufferParamsInfo *info, const ngs::RackDescription *description, SceNgsRackHandle *handle) {
-    if (host.cfg.disable_ngs) {
+    if (host.cfg.current_config.disable_ngs) {
         return 0;
     }
     assert(sys_handle);
@@ -219,7 +225,7 @@ EXPORT(int, sceNgsRackSetParamErrorCallback) {
 }
 
 EXPORT(int, sceNgsSystemGetRequiredMemorySize, ngs::SystemInitParameters *params, uint32_t *size) {
-    if (host.cfg.disable_ngs) {
+    if (host.cfg.current_config.disable_ngs) {
         *size = 1;
         return 0;
     }
@@ -230,7 +236,7 @@ EXPORT(int, sceNgsSystemGetRequiredMemorySize, ngs::SystemInitParameters *params
 
 EXPORT(SceUInt32, sceNgsSystemInit, Ptr<void> memspace, const std::uint32_t memspace_size, ngs::SystemInitParameters *params,
     SceNgsSynthSystemHandle *handle) {
-    if (host.cfg.disable_ngs) {
+    if (host.cfg.current_config.disable_ngs) {
         return 0;
     }
 
@@ -263,7 +269,7 @@ EXPORT(int, sceNgsSystemUnlock) {
 }
 
 EXPORT(SceUInt32, sceNgsSystemUpdate, SceNgsSynthSystemHandle handle) {
-    if (host.cfg.disable_ngs) {
+    if (host.cfg.current_config.disable_ngs) {
         return 0;
     }
 
@@ -278,7 +284,7 @@ EXPORT(int, sceNgsVoiceBypassModule) {
 }
 
 EXPORT(Ptr<ngs::VoiceDefinition>, sceNgsVoiceDefGetAtrac9Voice) {
-    if (host.cfg.disable_ngs) {
+    if (host.cfg.current_config.disable_ngs) {
         return Ptr<ngs::VoiceDefinition>(0);
     }
 
@@ -286,7 +292,7 @@ EXPORT(Ptr<ngs::VoiceDefinition>, sceNgsVoiceDefGetAtrac9Voice) {
 }
 
 EXPORT(Ptr<ngs::VoiceDefinition>, sceNgsVoiceDefGetCompressorBuss) {
-    if (host.cfg.disable_ngs) {
+    if (host.cfg.current_config.disable_ngs) {
         return Ptr<ngs::VoiceDefinition>(0);
     }
 
@@ -294,7 +300,7 @@ EXPORT(Ptr<ngs::VoiceDefinition>, sceNgsVoiceDefGetCompressorBuss) {
 }
 
 EXPORT(Ptr<ngs::VoiceDefinition>, sceNgsVoiceDefGetCompressorSideChainBuss) {
-    if (host.cfg.disable_ngs) {
+    if (host.cfg.current_config.disable_ngs) {
         return Ptr<ngs::VoiceDefinition>(0);
     }
 
@@ -302,7 +308,7 @@ EXPORT(Ptr<ngs::VoiceDefinition>, sceNgsVoiceDefGetCompressorSideChainBuss) {
 }
 
 EXPORT(Ptr<ngs::VoiceDefinition>, sceNgsVoiceDefGetDelayBuss) {
-    if (host.cfg.disable_ngs) {
+    if (host.cfg.current_config.disable_ngs) {
         return Ptr<ngs::VoiceDefinition>(0);
     }
 
@@ -310,7 +316,7 @@ EXPORT(Ptr<ngs::VoiceDefinition>, sceNgsVoiceDefGetDelayBuss) {
 }
 
 EXPORT(Ptr<ngs::VoiceDefinition>, sceNgsVoiceDefGetDistortionBuss) {
-    if (host.cfg.disable_ngs) {
+    if (host.cfg.current_config.disable_ngs) {
         return Ptr<ngs::VoiceDefinition>(0);
     }
 
@@ -318,7 +324,7 @@ EXPORT(Ptr<ngs::VoiceDefinition>, sceNgsVoiceDefGetDistortionBuss) {
 }
 
 EXPORT(Ptr<ngs::VoiceDefinition>, sceNgsVoiceDefGetEnvelopeBuss) {
-    if (host.cfg.disable_ngs) {
+    if (host.cfg.current_config.disable_ngs) {
         return Ptr<ngs::VoiceDefinition>(0);
     }
 
@@ -326,7 +332,7 @@ EXPORT(Ptr<ngs::VoiceDefinition>, sceNgsVoiceDefGetEnvelopeBuss) {
 }
 
 EXPORT(Ptr<ngs::VoiceDefinition>, sceNgsVoiceDefGetEqBuss) {
-    if (host.cfg.disable_ngs) {
+    if (host.cfg.current_config.disable_ngs) {
         return Ptr<ngs::VoiceDefinition>(0);
     }
 
@@ -334,7 +340,7 @@ EXPORT(Ptr<ngs::VoiceDefinition>, sceNgsVoiceDefGetEqBuss) {
 }
 
 EXPORT(Ptr<ngs::VoiceDefinition>, sceNgsVoiceDefGetMasterBuss) {
-    if (host.cfg.disable_ngs) {
+    if (host.cfg.current_config.disable_ngs) {
         return Ptr<ngs::VoiceDefinition>(0);
     }
 
@@ -342,7 +348,7 @@ EXPORT(Ptr<ngs::VoiceDefinition>, sceNgsVoiceDefGetMasterBuss) {
 }
 
 EXPORT(Ptr<ngs::VoiceDefinition>, sceNgsVoiceDefGetMixerBuss) {
-    if (host.cfg.disable_ngs) {
+    if (host.cfg.current_config.disable_ngs) {
         return Ptr<ngs::VoiceDefinition>(0);
     }
 
@@ -350,7 +356,7 @@ EXPORT(Ptr<ngs::VoiceDefinition>, sceNgsVoiceDefGetMixerBuss) {
 }
 
 EXPORT(Ptr<ngs::VoiceDefinition>, sceNgsVoiceDefGetPauserBuss) {
-    if (host.cfg.disable_ngs) {
+    if (host.cfg.current_config.disable_ngs) {
         return Ptr<ngs::VoiceDefinition>(0);
     }
 
@@ -358,7 +364,7 @@ EXPORT(Ptr<ngs::VoiceDefinition>, sceNgsVoiceDefGetPauserBuss) {
 }
 
 EXPORT(Ptr<ngs::VoiceDefinition>, sceNgsVoiceDefGetPitchShiftBuss) {
-    if (host.cfg.disable_ngs) {
+    if (host.cfg.current_config.disable_ngs) {
         return Ptr<ngs::VoiceDefinition>(0);
     }
 
@@ -366,7 +372,7 @@ EXPORT(Ptr<ngs::VoiceDefinition>, sceNgsVoiceDefGetPitchShiftBuss) {
 }
 
 EXPORT(Ptr<ngs::VoiceDefinition>, sceNgsVoiceDefGetReverbBuss) {
-    if (host.cfg.disable_ngs) {
+    if (host.cfg.current_config.disable_ngs) {
         return Ptr<ngs::VoiceDefinition>(0);
     }
 
@@ -374,7 +380,7 @@ EXPORT(Ptr<ngs::VoiceDefinition>, sceNgsVoiceDefGetReverbBuss) {
 }
 
 EXPORT(Ptr<ngs::VoiceDefinition>, sceNgsVoiceDefGetSasEmuVoice) {
-    if (host.cfg.disable_ngs) {
+    if (host.cfg.current_config.disable_ngs) {
         return Ptr<ngs::VoiceDefinition>(0);
     }
 
@@ -382,7 +388,7 @@ EXPORT(Ptr<ngs::VoiceDefinition>, sceNgsVoiceDefGetSasEmuVoice) {
 }
 
 EXPORT(Ptr<ngs::VoiceDefinition>, sceNgsVoiceDefGetScreamAtrac9Voice) {
-    if (host.cfg.disable_ngs) {
+    if (host.cfg.current_config.disable_ngs) {
         return Ptr<ngs::VoiceDefinition>(0);
     }
 
@@ -390,7 +396,7 @@ EXPORT(Ptr<ngs::VoiceDefinition>, sceNgsVoiceDefGetScreamAtrac9Voice) {
 }
 
 EXPORT(Ptr<ngs::VoiceDefinition>, sceNgsVoiceDefGetScreamVoice) {
-    if (host.cfg.disable_ngs) {
+    if (host.cfg.current_config.disable_ngs) {
         return Ptr<ngs::VoiceDefinition>(0);
     }
 
@@ -398,7 +404,7 @@ EXPORT(Ptr<ngs::VoiceDefinition>, sceNgsVoiceDefGetScreamVoice) {
 }
 
 EXPORT(Ptr<ngs::VoiceDefinition>, sceNgsVoiceDefGetSimpleAtrac9Voice) {
-    if (host.cfg.disable_ngs) {
+    if (host.cfg.current_config.disable_ngs) {
         return Ptr<ngs::VoiceDefinition>(0);
     }
 
@@ -406,7 +412,7 @@ EXPORT(Ptr<ngs::VoiceDefinition>, sceNgsVoiceDefGetSimpleAtrac9Voice) {
 }
 
 EXPORT(Ptr<ngs::VoiceDefinition>, sceNgsVoiceDefGetSimpleVoice) {
-    if (host.cfg.disable_ngs) {
+    if (host.cfg.current_config.disable_ngs) {
         return Ptr<ngs::VoiceDefinition>(0);
     }
 
@@ -414,7 +420,7 @@ EXPORT(Ptr<ngs::VoiceDefinition>, sceNgsVoiceDefGetSimpleVoice) {
 }
 
 EXPORT(Ptr<ngs::VoiceDefinition>, sceNgsVoiceDefGetTemplate1) {
-    if (host.cfg.disable_ngs) {
+    if (host.cfg.current_config.disable_ngs) {
         return Ptr<ngs::VoiceDefinition>(0);
     }
 
@@ -479,7 +485,7 @@ EXPORT(int, sceNgsVoiceGetModuleType) {
 }
 
 EXPORT(SceInt32, sceNgsVoiceGetOutputPatch, SceNgsVoiceHandle voice_handle, const SceInt32 output_index, const SceInt32 output_subindex, SceNgsPatchHandle *handle) {
-    if (host.cfg.disable_ngs) {
+    if (host.cfg.current_config.disable_ngs) {
         return 0;
     }
 
@@ -511,7 +517,7 @@ EXPORT(int, sceNgsVoiceGetParamsOutOfRange) {
 }
 
 EXPORT(SceInt32, sceNgsVoiceGetStateData, SceNgsVoiceHandle voice_handle, const SceUInt32 module, void *mem, const SceUInt32 mem_size) {
-    if (host.cfg.disable_ngs) {
+    if (host.cfg.current_config.disable_ngs) {
         return 0;
     }
 
@@ -531,7 +537,7 @@ EXPORT(int, sceNgsVoiceInit) {
 }
 
 EXPORT(SceInt32, sceNgsVoiceKeyOff, SceNgsVoiceHandle voice_handle) {
-    if (host.cfg.disable_ngs) {
+    if (host.cfg.current_config.disable_ngs) {
         return SCE_NGS_OK;
     }
 
@@ -546,7 +552,7 @@ EXPORT(SceInt32, sceNgsVoiceKeyOff, SceNgsVoiceHandle voice_handle) {
 }
 
 EXPORT(int, sceNgsVoiceKill, SceNgsVoiceHandle voice_handle) {
-    if (host.cfg.disable_ngs) {
+    if (host.cfg.current_config.disable_ngs) {
         return 0;
     }
 
@@ -561,7 +567,7 @@ EXPORT(int, sceNgsVoiceKill, SceNgsVoiceHandle voice_handle) {
 }
 
 EXPORT(SceUInt32, sceNgsVoiceLockParams, SceNgsVoiceHandle voice_handle, SceUInt32 module, SceUInt32 unk2, Ptr<ngs::BufferParamsInfo> buf) {
-    if (host.cfg.disable_ngs) {
+    if (host.cfg.current_config.disable_ngs) {
         auto *buffer_info = buf.get(host.mem);
 
         buffer_info->data = alloc(host.mem, 10, "SceNgs buffer stub");
@@ -591,7 +597,7 @@ EXPORT(SceUInt32, sceNgsVoiceLockParams, SceNgsVoiceHandle voice_handle, SceUInt
 }
 
 EXPORT(SceInt32, sceNgsVoicePatchSetVolume, SceNgsPatchHandle patch_handle, const SceInt32 output_channel, const SceInt32 input_channel, const SceFloat32 vol) {
-    if (host.cfg.disable_ngs)
+    if (host.cfg.current_config.disable_ngs)
         return SCE_NGS_OK;
 
     ngs::Patch *patch = patch_handle.get(host.mem);
@@ -604,7 +610,7 @@ EXPORT(SceInt32, sceNgsVoicePatchSetVolume, SceNgsPatchHandle patch_handle, cons
 }
 
 EXPORT(SceInt32, sceNgsVoicePatchSetVolumes, SceNgsPatchHandle patch_handle, const SceInt32 output_channel, const SceFloat32 *volumes, const SceInt32 vols) {
-    if (host.cfg.disable_ngs)
+    if (host.cfg.current_config.disable_ngs)
         return SCE_NGS_OK;
 
     ngs::Patch *patch = patch_handle.get(host.mem);
@@ -618,7 +624,7 @@ EXPORT(SceInt32, sceNgsVoicePatchSetVolumes, SceNgsPatchHandle patch_handle, con
 }
 
 EXPORT(SceInt32, sceNgsVoicePatchSetVolumesMatrix, SceNgsPatchHandle patch_handle, const SceNgsVolumeMatrix *matrix) {
-    if (host.cfg.disable_ngs)
+    if (host.cfg.current_config.disable_ngs)
         return 0;
 
     ngs::Patch *patch = patch_handle.get(host.mem);
@@ -634,7 +640,7 @@ EXPORT(SceInt32, sceNgsVoicePatchSetVolumesMatrix, SceNgsPatchHandle patch_handl
 }
 
 EXPORT(int, sceNgsVoicePause, SceNgsVoiceHandle handle) {
-    if (host.cfg.disable_ngs) {
+    if (host.cfg.current_config.disable_ngs) {
         return 0;
     }
 
@@ -652,7 +658,7 @@ EXPORT(int, sceNgsVoicePause, SceNgsVoiceHandle handle) {
 }
 
 EXPORT(SceUInt32, sceNgsVoicePlay, SceNgsVoiceHandle handle) {
-    if (host.cfg.disable_ngs) {
+    if (host.cfg.current_config.disable_ngs) {
         return 0;
     }
 
@@ -670,7 +676,7 @@ EXPORT(SceUInt32, sceNgsVoicePlay, SceNgsVoiceHandle handle) {
 }
 
 EXPORT(int, sceNgsVoiceResume, SceNgsVoiceHandle handle) {
-    if (host.cfg.disable_ngs) {
+    if (host.cfg.current_config.disable_ngs) {
         return 0;
     }
 
@@ -679,6 +685,9 @@ EXPORT(int, sceNgsVoiceResume, SceNgsVoiceHandle handle) {
     if (!voice) {
         return RET_ERROR(SCE_NGS_ERROR_INVALID_ARG);
     }
+
+    if (voice->state != ngs::VOICE_STATE_PAUSED)
+        return RET_ERROR(SCE_NGS_ERROR_INVALID_STATE);
 
     if (!voice->rack->system->voice_scheduler.resume(host.mem, voice)) {
         return RET_ERROR(SCE_NGS_ERROR);
@@ -692,7 +701,7 @@ EXPORT(int, sceNgsVoiceSetFinishedCallback) {
 }
 
 EXPORT(SceInt32, sceNgsVoiceSetModuleCallback, SceNgsVoiceHandle voice_handle, const SceUInt32 module, Ptr<ngs::ModuleCallback> callback, Ptr<void> user_data) {
-    if (host.cfg.disable_ngs) {
+    if (host.cfg.current_config.disable_ngs) {
         return 0;
     }
 
@@ -717,7 +726,7 @@ EXPORT(int, sceNgsVoiceSetPreset) {
 }
 
 EXPORT(SceUInt32, sceNgsVoiceUnlockParams, SceNgsVoiceHandle handle, const SceUInt32 module_index) {
-    if (host.cfg.disable_ngs) {
+    if (host.cfg.current_config.disable_ngs) {
         return 0;
     }
 

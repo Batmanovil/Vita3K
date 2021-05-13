@@ -15,7 +15,9 @@
 // with this program; if not, write to the Free Software Foundation, Inc.,
 // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
-#include <mem/mem.h>
+#include <mem/functions.h>
+#include <mem/state.h>
+
 #include <util/align.h>
 #include <util/log.h>
 
@@ -80,6 +82,14 @@ bool init(MemState &state) {
     state.page_size = std::max(STANDARD_PAGE_SIZE, state.page_size);
 
     assert(state.page_size >= 4096); // Limit imposed by Unicorn.
+
+    state.pages_cpu = std::make_unique<std::array<uint8_t *, MB(1)>>();
+
+    (*(state.pages_cpu))[0] = state.memory.get();
+
+    for (std::size_t i = 1; i < state.pages_cpu->size(); i++) {
+        (*(state.pages_cpu))[i] = (*(state.pages_cpu))[i - 1] + state.page_size;
+    }
 
     const size_t length = GB(4);
 #ifdef WIN32
@@ -150,6 +160,13 @@ Address alloc_at(MemState &state, Address address, size_t size, const char *name
     alloc_inner(state, address, page_count, block, name);
 
     return address;
+}
+
+Block alloc_block(MemState &mem, size_t size, const char *name) {
+    const Address address = alloc(mem, size, name);
+    return Block(address, [&mem](Address stack) {
+        free(mem, stack);
+    });
 }
 
 void free(MemState &state, Address address) {

@@ -1,5 +1,5 @@
-add_library(modules STATIC
-	module_parent.cpp include/modules/module_parent.h
+set(SOURCE_LIST
+	module_parent.cpp include/modules/module_parent.h include/modules/library_init_list.inc
 
 	SceAVConfig/SceAVConfig.cpp SceAVConfig/SceAVConfig.h
 	SceAppMgr/SceAppMgr.cpp SceAppMgr/SceAppMgr.h
@@ -45,6 +45,7 @@ add_library(modules STATIC
 	SceFios2/SceFios2User.cpp SceFios2/SceFios2User.h
 	SceFios2Kernel/SceFios2Kernel.cpp SceFios2Kernel/SceFios2Kernel.h
 	SceFios2Kernel/SceFios2Kernel02.cpp SceFios2Kernel/SceFios2Kernel02.h
+	SceFios2Kernel/SceFios2KernelForDriver.cpp SceFios2Kernel/SceFios2KernelForDriver.h
 	SceGameUpdate/SceGameUpdate.cpp SceGameUpdate/SceGameUpdate.h
 	SceGps/SceGps.cpp SceGps/SceGps.h
 	SceGpuEs4/SceGpuEs4ForUser.cpp SceGpuEs4/SceGpuEs4ForUser.h
@@ -68,6 +69,8 @@ add_library(modules STATIC
 	SceKernelModulemgr/SceModulemgr.cpp SceKernelModulemgr/SceModulemgr.h
 	SceKernelThreadMgr/SceThreadmgr.cpp SceKernelThreadMgr/SceThreadmgr.h
 	SceKernelThreadMgr/SceThreadmgrCoredumpTime.cpp SceKernelThreadMgr/SceThreadmgrCoredumpTime.h
+	SceKernelThreadMgr/SceThreadmgrForDriver.cpp SceKernelThreadMgr/SceThreadmgrForDriver.h
+	SceKernelThreadMgr/SceThreadmgrForKernel.cpp SceKernelThreadMgr/SceThreadmgrForKernel.h
 	SceLibDbg/SceDbg.cpp SceLibDbg/SceDbg.h
 	SceLibJson/SceLibJson.cpp SceLibJson/SceLibJson.h
 	SceLibKernel/SceLibKernel.cpp SceLibKernel/SceLibKernel.h
@@ -128,6 +131,7 @@ add_library(modules STATIC
 	ScePhotoExport/ScePhotoExport.cpp ScePhotoExport/ScePhotoExport.h
 	ScePower/ScePower.cpp ScePower/ScePower.h
 	SceProcessmgr/SceProcessmgr.cpp SceProcessmgr/SceProcessmgr.h
+	SceProcessmgr/SceProcessmgrForDriver.cpp SceProcessmgr/SceProcessmgrForDriver.h
 	ScePromoterUtil/ScePromoterUtil.cpp ScePromoterUtil/ScePromoterUtil.h
 	ScePspnetAdhoc/ScePspnetAdhoc.cpp ScePspnetAdhoc/ScePspnetAdhoc.h
 	ScePvf/ScePvf.cpp ScePvf/ScePvf.h
@@ -163,9 +167,15 @@ add_library(modules STATIC
 	SceStdio/SceStdio.cpp SceStdio/SceStdio.h
 	SceSulpha/SceSulpha.cpp SceSulpha/SceSulpha.h
 	SceSysmem/SceCpu.cpp SceSysmem/SceCpu.h
+	SceSysmem/SceCpuForDriver.cpp SceSysmem/SceCpuForDriver.h
+	SceSysmem/SceDebugForDriver.cpp SceSysmem/SceDebugForDriver.h
 	SceSysmem/SceDebugLed.cpp SceSysmem/SceDebugLed.h
 	SceSysmem/SceDipsw.cpp SceSysmem/SceDipsw.h
+	SceSysmem/SceDipswForDriver.cpp SceSysmem/SceDipswForDriver.h
+	SceSysmem/SceProcEventForDriver.cpp SceSysmem/SceProcEventForDriver.h
+	SceSysmem/SceSysclibForDriver.cpp SceSysmem/SceSysclibForDriver.h
 	SceSysmem/SceSysmem.cpp SceSysmem/SceSysmem.h
+	SceSysmem/SceSysmemForDriver.cpp SceSysmem/SceSysmemForDriver.h
 	SceSysmodule/SceSysmodule.cpp SceSysmodule/SceSysmodule.h
 	SceSystemGesture/SceSystemGesture.cpp SceSystemGesture/SceSystemGesture.h
 	SceTeleportClient/SceTeleportClient.cpp SceTeleportClient/SceTeleportClient.h
@@ -188,6 +198,11 @@ add_library(modules STATIC
 	SceVshBridge/SceVshBridge.cpp SceVshBridge/SceVshBridge.h
 	SceWlanBt/SceWlan.cpp SceWlanBt/SceWlan.h
 )
+
+add_library(modules STATIC
+	${SOURCE_LIST}	
+)
 target_include_directories(modules PUBLIC include)
 target_link_libraries(modules PRIVATE xxHash::xxhash)
 target_link_libraries(modules PUBLIC module)
+source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${SOURCE_LIST})

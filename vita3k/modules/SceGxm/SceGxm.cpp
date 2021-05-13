@@ -130,7 +130,7 @@ static int init_texture_base(const char *export_name, SceGxmTexture *texture, Pt
     texture->format0 = (tex_format & 0x80000000) >> 31;
     texture->lod_bias = 31;
 
-    if (texture_type == SCE_GXM_TEXTURE_SWIZZLED) {
+    if ((texture_type == SCE_GXM_TEXTURE_SWIZZLED) || (texture_type == SCE_GXM_TEXTURE_CUBE)) {
         // Find highest set bit of width and height. It's also the 2^? for width and height
         static auto highest_set_bit = [](const int num) -> std::uint32_t {
             for (std::uint32_t i = 12; i != 0; i--) {
@@ -655,7 +655,7 @@ static int gxmDrawElementGeneral(HostState &host, const char *export_name, SceGx
         const auto vertex_program = context->record.vertex_program.get(host.mem);
         const auto program = vertex_program->program.get(host.mem);
 
-        const size_t size = program->default_uniform_buffer_count * 4;
+        const size_t size = (size_t)program->default_uniform_buffer_count * 4;
         const size_t next_used = context->state.vertex_ring_buffer_used + size;
         assert(next_used <= context->state.params.vertexRingBufferMemSize);
         if (next_used > context->state.params.vertexRingBufferMemSize) {
@@ -669,7 +669,7 @@ static int gxmDrawElementGeneral(HostState &host, const char *export_name, SceGx
         const auto fragment_program = context->record.fragment_program.get(host.mem);
         const auto program = fragment_program->program.get(host.mem);
 
-        const size_t size = program->default_uniform_buffer_count * 4;
+        const size_t size = (size_t)program->default_uniform_buffer_count * 4;
         const size_t next_used = context->state.fragment_ring_buffer_used + size;
         assert(next_used <= context->state.params.fragmentRingBufferMemSize);
         if (next_used > context->state.params.fragmentRingBufferMemSize) {
@@ -1048,22 +1048,11 @@ EXPORT(int, sceGxmInitialize, const SceGxmInitializeParams *params) {
 
     const auto stack_size = SCE_KERNEL_STACK_SIZE_USER_DEFAULT; // TODO: Verify this is the correct stack size
 
-    auto inject = create_cpu_dep_inject(host);
-    host.gxm.display_queue_thread = create_thread(Ptr<void>(read_pc(*main_thread->cpu)), host.kernel, host.mem, "SceGxmDisplayQueue", SCE_KERNEL_HIGHEST_PRIORITY_USER, stack_size, inject, nullptr);
+    host.gxm.display_queue_thread = create_thread(Ptr<void>(read_pc(*main_thread->cpu)), host.kernel, host.mem, "SceGxmDisplayQueue", SCE_KERNEL_HIGHEST_PRIORITY_USER, stack_size, nullptr);
 
     if (host.gxm.display_queue_thread < 0) {
         return RET_ERROR(SCE_GXM_ERROR_DRIVER);
     }
-
-    const ThreadStatePtr display_thread = util::find(host.gxm.display_queue_thread, host.kernel.threads);
-
-    const std::function<void(SDL_Thread *)> delete_thread = [display_thread](SDL_Thread *running_thread) {
-        {
-            const std::lock_guard<std::mutex> lock(display_thread->mutex);
-            display_thread->to_do = ThreadToDo::exit;
-        }
-        display_thread->something_to_do.notify_all(); // TODO Should this be notify_one()?
-    };
 
     GxmThreadParams gxm_params;
     gxm_params.mem = &host.mem;
@@ -1072,7 +1061,7 @@ EXPORT(int, sceGxmInitialize, const SceGxmInitializeParams *params) {
     gxm_params.gxm = &host.gxm;
     gxm_params.renderer = host.renderer.get();
 
-    const ThreadPtr running_thread(SDL_CreateThread(&thread_function, "SceGxmDisplayQueue", &gxm_params), delete_thread);
+    const ThreadPtr running_thread(SDL_CreateThread(&thread_function, "SceGxmDisplayQueue", &gxm_params), [](SDL_Thread *running_thread) {});
     SDL_SemWait(gxm_params.host_may_destroy_params.get());
     host.kernel.running_threads.emplace(host.gxm.display_queue_thread, running_thread);
     host.gxm.notification_region = Ptr<uint32_t>(alloc(host.mem, MB(1), "SceGxmNotificationRegion"));
@@ -1346,7 +1335,10 @@ EXPORT(int, sceGxmPrecomputedFragmentStateSetUniformBuffer, SceGxmPrecomputedFra
         return RET_ERROR(SCE_GXM_ERROR_INVALID_POINTER);
     }
 
-    return UNIMPLEMENTED();
+    auto &state_uniform_buffers = *precomputedState->uniform_buffers.get(host.mem);
+    state_uniform_buffers[bufferIndex] = bufferData;
+
+    return 0;
 }
 
 EXPORT(Ptr<const void>, sceGxmPrecomputedVertexStateGetDefaultUniformBuffer, SceGxmPrecomputedVertexState *state) {
@@ -1707,7 +1699,7 @@ EXPORT(void, sceGxmSetBackDepthWriteEnable, SceGxmContext *context, SceGxmDepthW
 }
 
 EXPORT(void, sceGxmSetBackFragmentProgramEnable, SceGxmContext *context, SceGxmFragmentProgramMode enable) {
-    UNIMPLEMENTED();
+    renderer::set_side_fragment_program_enable(*host.renderer, context->renderer.get(), false, enable);
 }
 
 EXPORT(void, sceGxmSetBackLineFillLastPixelEnable, SceGxmContext *context, SceGxmLineFillLastPixelMode enable) {
@@ -1836,7 +1828,7 @@ EXPORT(void, sceGxmSetFrontDepthWriteEnable, SceGxmContext *context, SceGxmDepth
 }
 
 EXPORT(void, sceGxmSetFrontFragmentProgramEnable, SceGxmContext *context, SceGxmFragmentProgramMode enable) {
-    UNIMPLEMENTED();
+    renderer::set_side_fragment_program_enable(*host.renderer, context->renderer.get(), true, enable);
 }
 
 EXPORT(void, sceGxmSetFrontLineFillLastPixelEnable, SceGxmContext *context, SceGxmLineFillLastPixelMode enable) {
@@ -2450,29 +2442,7 @@ EXPORT(int, sceGxmSyncObjectDestroy, Ptr<SceGxmSyncObject> syncObject) {
 
 EXPORT(int, sceGxmTerminate) {
     const ThreadStatePtr thread = lock_and_find(host.gxm.display_queue_thread, host.kernel.threads, host.kernel.mutex);
-    std::unique_lock<std::mutex> thread_lock(thread->mutex);
-
-    thread->to_do = ThreadToDo::exit;
-    stop(*thread->cpu);
-    thread->something_to_do.notify_all();
-
-    for (auto t : thread->waiting_threads) {
-        const std::lock_guard<std::mutex> lock(t->mutex);
-        assert(t->to_do == ThreadToDo::wait);
-        t->to_do = ThreadToDo::run;
-        t->something_to_do.notify_one();
-    }
-
-    thread->waiting_threads.clear();
-
-    // need to unlock thread->mutex because thread destructor (delete_thread) will get called, and it locks that mutex
-    thread_lock.unlock();
-
-    // TODO: This causes a deadlock
-    //const std::lock_guard<std::mutex> lock2(host.kernel.mutex);
-    host.kernel.running_threads.erase(host.gxm.display_queue_thread);
-    host.kernel.waiting_threads.erase(host.gxm.display_queue_thread);
-    host.kernel.threads.erase(host.gxm.display_queue_thread);
+    exit_and_delete_thread(*thread);
     return 0;
 }
 
@@ -2617,11 +2587,14 @@ EXPORT(int, sceGxmTextureInitCube, SceGxmTexture *texture, Ptr<const void> data,
     return result;
 }
 
-EXPORT(int, sceGxmTextureInitCubeArbitrary, SceGxmTexture *texture, const void *data, SceGxmTextureFormat texFormat, uint32_t width, uint32_t height, uint32_t mipCount) {
+EXPORT(int, sceGxmTextureInitCubeArbitrary, SceGxmTexture *texture, Ptr<const void> data, SceGxmTextureFormat texFormat, uint32_t width, uint32_t height, uint32_t mipCount) {
     if (!texture) {
         return RET_ERROR(SCE_GXM_ERROR_INVALID_POINTER);
     }
-    return UNIMPLEMENTED();
+    STUBBED("Stub InitCubeArbitrary");
+    const int result = init_texture_base(export_name, texture, data, texFormat, width, height, mipCount, SCE_GXM_TEXTURE_CUBE_ARBITRARY);
+
+    return result;
 }
 
 EXPORT(int, sceGxmTextureInitLinear, SceGxmTexture *texture, Ptr<const void> data, SceGxmTextureFormat texFormat, uint32_t width, uint32_t height, uint32_t mipCount) {

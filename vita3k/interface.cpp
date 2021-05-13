@@ -39,9 +39,7 @@
 
 #include <SDL.h>
 
-#ifdef USE_GDBSTUB
 #include <gdbstub/functions.h>
-#endif
 
 #if USE_DISCORD
 #include <app/discord.h>
@@ -237,7 +235,7 @@ bool install_archive(HostState &host, GuiState *gui, const fs::path &archive_pat
         if (fs::exists(output_path / "sce_sys/package/work.bin")) {
             std::string licpath = output_path.string() + "/sce_sys/package/work.bin";
             update_progress();
-            if (!decrypt_install_nonpdrm(licpath, output_path.string())) {
+            if (!decrypt_install_nonpdrm(host, licpath, output_path.string())) {
                 LOG_ERROR("NoNpDrm installation failed, deleting data!");
                 fs::remove_all(output_path);
                 return false;
@@ -297,13 +295,13 @@ static ExitCode load_app_impl(Ptr<const void> &entry_point, HostState &host, con
         logging::set_level(static_cast<spdlog::level::level_enum>(host.cfg.log_level));
     }
 
-    LOG_INFO("ngs experimental state: {}", !host.cfg.disable_ngs);
-    LOG_INFO("video player state: {}", host.cfg.video_playing);
-    if (host.cfg.auto_lle)
+    LOG_INFO("ngs experimental state: {}", !host.cfg.current_config.disable_ngs);
+    LOG_INFO("video player state: {}", host.cfg.current_config.video_playing);
+    if (host.cfg.current_config.auto_lle)
         LOG_INFO("{}: enabled", host.cfg[e_auto_lle]);
-    else if (!host.cfg.lle_modules.empty()) {
+    else if (!host.cfg.current_config.lle_modules.empty()) {
         std::string modules;
-        for (const auto &mod : host.cfg.lle_modules) {
+        for (const auto &mod : host.cfg.current_config.lle_modules) {
             modules += mod + ",";
         }
         modules.pop_back();
@@ -323,7 +321,7 @@ static ExitCode load_app_impl(Ptr<const void> &entry_point, HostState &host, con
         host.kernel.export_nids.emplace(var.nid, addr);
     }
 
-    if (host.cfg.lle_kernel) {
+    if (host.cfg.current_config.lle_kernel) {
         // Load kernel pre-loaded module
         const std::vector<std::string> lib_load_list = {
             "us/libkernel.suprx",
@@ -421,11 +419,11 @@ bool handle_events(HostState &host, GuiState &gui) {
                 if (event.key.keysym.sym == SDLK_g)
                     host.display.imgui_render = !host.display.imgui_render;
             }
-            if (!host.io.title_id.empty() && !gui.live_area.app_selector && gui::get_live_area_sys_app_state(gui)) {
+            if (!host.io.title_id.empty() && !gui.live_area.app_selector && gui::get_sys_apps_state(gui)) {
                 // Show/Hide Live Area during app run
                 // TODO pause app running
                 if (event.key.keysym.scancode == host.cfg.keyboard_button_psbutton) {
-                    gui::update_apps_list_opened(gui, host.io.title_id);
+                    gui::update_apps_list_opened(gui, host, host.io.app_path);
                     gui::init_live_area(gui, host);
                     gui.live_area.information_bar = !gui.live_area.information_bar;
                     gui.live_area.live_area_screen = !gui.live_area.live_area_screen;
@@ -462,8 +460,10 @@ bool handle_events(HostState &host, GuiState &gui) {
             const auto drop_file = fs::path(string_utils::utf_to_wide(event.drop.file));
             if ((drop_file.extension() == ".vpk") || (drop_file.extension() == ".zip"))
                 install_archive(host, &gui, drop_file);
+            else if ((drop_file.extension() == ".rif") || (drop_file.extension() == ".bin"))
+                copy_license(host, drop_file);
             else
-                LOG_ERROR("File droped: [{}] is not supported for install .zip/.vpk", drop_file.filename().string());
+                LOG_ERROR("File droped: [{}] is not supported.", drop_file.filename().string());
             SDL_free(event.drop.file);
             break;
         }
@@ -486,9 +486,10 @@ ExitCode load_app(Ptr<const void> &entry_point, HostState &host, const std::wstr
     if (!host.cfg.show_gui)
         host.display.imgui_render = false;
 
-#ifdef USE_GDBSTUB
-    server_open(host);
-#endif
+    if (host.cfg.gdbstub) {
+        host.kernel.wait_for_debugger = true;
+        server_open(host);
+    }
 
 #if USE_DISCORD
     if (host.cfg.discord_rich_presence)
@@ -515,9 +516,7 @@ ExitCode run_app(HostState &host, Ptr<const void> &entry_point) {
         return ::resolve_nid_name(host.kernel, addr);
     };
 
-    auto inject = create_cpu_dep_inject(host);
-    const SceUID main_thread_id = create_thread(entry_point, host.kernel, host.mem, host.io.title_id.c_str(), SCE_KERNEL_DEFAULT_PRIORITY_USER, static_cast<int>(SCE_KERNEL_STACK_SIZE_USER_MAIN),
-        inject, nullptr);
+    const SceUID main_thread_id = create_thread(entry_point, host.kernel, host.mem, host.io.title_id.c_str(), SCE_KERNEL_DEFAULT_PRIORITY_USER, static_cast<int>(SCE_KERNEL_STACK_SIZE_USER_MAIN), nullptr);
 
     if (main_thread_id < 0) {
         app::error_dialog("Failed to init main thread.", host.window.get());
@@ -538,15 +537,10 @@ ExitCode run_app(HostState &host, Ptr<const void> &entry_point) {
         LOG_DEBUG("Running module_start of library: {} at address {}", module_name, log_hex(module_start.address()));
 
         auto argp = Ptr<void>();
-        auto inject = create_cpu_dep_inject(host);
-        const SceUID module_thread_id = create_thread(module_start, host.kernel, host.mem, module_name, SCE_KERNEL_DEFAULT_PRIORITY_USER, static_cast<int>(SCE_KERNEL_STACK_SIZE_USER_DEFAULT),
-            inject, nullptr);
+        const SceUID module_thread_id = create_thread(module_start, host.kernel, host.mem, module_name, SCE_KERNEL_DEFAULT_PRIORITY_USER, static_cast<int>(SCE_KERNEL_STACK_SIZE_USER_DEFAULT), nullptr);
         const ThreadStatePtr module_thread = util::find(module_thread_id, host.kernel.threads);
         const auto ret = run_on_current(*module_thread, module_start, 0, argp);
-        module_thread->to_do = ThreadToDo::exit;
-        module_thread->something_to_do.notify_all(); // TODO Should this be notify_one()?
-        host.kernel.running_threads.erase(module_thread_id);
-        host.kernel.threads.erase(module_thread_id);
+        delete_thread(host.kernel, *module_thread);
 
         LOG_INFO("Module {} (at \"{}\") module_start returned {}", module_name, module->path, log_hex(ret));
     }

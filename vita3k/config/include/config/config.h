@@ -26,7 +26,9 @@
 // When adding in a new macro for generation, ALL options must be stated.
 #define CONFIG_INDIVIDUAL(code)                                                                         \
     code(bool, "log-imports", false, log_imports)                                                       \
+    code(bool, "dump-elfs", false, dump_elfs)                                                           \
     code(bool, "stack-traceback", false, stack_traceback)                                               \
+    code(bool, "gdbstub", false, gdbstub)                                                               \
     code(bool, "log-exports", false, log_exports)                                                       \
     code(bool, "log-active-shaders", false, log_active_shaders)                                         \
     code(bool, "log-uniforms", false, log_uniforms)                                                     \
@@ -37,7 +39,7 @@
     code(int, "icon-size", 64, icon_size)                                                               \
     code(bool, "archive-log", false, archive_log)                                                       \
     code(bool, "texture-cache", true, texture_cache)                                                    \
-    code(bool, "disable-ngs", true, disable_ngs)                                                        \
+    code(bool, "disable-ngs", false, disable_ngs)                                                       \
     code(int, "sys-button", static_cast<int>(SCE_SYSTEM_PARAM_ENTER_BUTTON_CROSS), sys_button)          \
     code(int, "sys-lang", static_cast<int>(SCE_SYSTEM_PARAM_LANG_ENGLISH_US), sys_lang)                 \
     code(bool, "lle-kernel", false, lle_kernel)                                                         \
@@ -47,6 +49,7 @@
     code(int, "delay-start", 10, delay_start)                                                           \
     code(float, "background-alpha", .300f, background_alpha)                                            \
     code(int, "log-level", static_cast<int>(spdlog::level::trace), log_level)                           \
+    code(std::string, "cpu-backend", "Unicorn", cpu_backend)                                            \
     code(std::string, "pref-path", std::string{}, pref_path)                                            \
     code(std::string, "last-app", std::string{}, last_app)                                              \
     code(bool, "discord-rich-presence", true, discord_rich_presence)                                    \
@@ -85,14 +88,16 @@
     code(bool, "show-welcome", true, show_welcome)                                                      \
     code(bool, "asia-font-support", false, asia_font_support)                                           \
     code(bool, "video-playing", true, video_playing)                                                    \
-    code(bool, "spirv-shader", false, spirv_shader)
+    code(bool, "spirv-shader", false, spirv_shader)                                                     \
+    code(uint64_t, "current-ime-lang", 4, current_ime_lang)
 
 // Vector members produced in the config file
 // Order is code(option_type, option_name, default_value)
 // If you are going to implement a dynamic list in the YAML, add it here instead
 // When adding in a new macro for generation, ALL options must be stated.
 #define CONFIG_VECTOR(code)                                                                             \
-    code(std::vector<std::string>, "lle-modules", std::vector<std::string>{}, lle_modules)
+    code(std::vector<std::string>, "lle-modules", std::vector<std::string>{}, lle_modules)              \
+    code(std::vector<uint64_t>, "ime-langs", std::vector<uint64_t>{4}, ime_langs)
 
 // Parent macro for easier generation
 #define CONFIG_LIST(code)                                                                               \

@@ -17,45 +17,44 @@
 
 #pragma once
 
-#include <mem/mem.h> // Address.
+#include <mem/block.h>
 #include <mem/ptr.h>
+#include <util/semaphore.h>
 
 #include <condition_variable>
 #include <mutex>
 #include <string>
-#include <util/semaphore.h>
 
 struct CPUState;
 struct CPUContext;
 
-template <typename T>
-class Resource;
-
-typedef Resource<Address> ThreadStack;
-typedef std::shared_ptr<ThreadStack> ThreadStackPtr;
 typedef std::unique_ptr<CPUState, std::function<void(CPUState *)>> CPUStatePtr;
-typedef std::unique_ptr<CPUContext, std::function<void(CPUContext *)>> CPUContextPtr;
 
 enum class ThreadToDo {
+    exit_delete,
     exit,
     run,
     step,
     wait,
 };
 
+constexpr auto kernel_tls_size = 0x800;
+
 struct ThreadState {
-    ThreadStackPtr stack;
+    Block stack;
     int priority;
     int stack_size;
     CPUStatePtr cpu;
-    CPUContextPtr cpu_context;
-    Ptr<void> fiber;
     ThreadToDo to_do = ThreadToDo::run;
     std::mutex mutex;
     sync_utils::Semaphore signal;
     std::condition_variable something_to_do;
     std::vector<std::shared_ptr<ThreadState>> waiting_threads;
     std::string name;
+    SceUID id;
     Address entry_point;
     int returned_value;
+    Block tls;
 };
+
+typedef std::shared_ptr<ThreadState> ThreadStatePtr;

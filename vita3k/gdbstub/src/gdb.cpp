@@ -17,8 +17,6 @@
 // with this program; if not, write to the Free Software Foundation, Inc.,
 // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
-#ifdef USE_GDBSTUB
-
 #include <host/state.h>
 #include <util/log.h>
 
@@ -27,7 +25,7 @@
 #include <cpu/functions.h>
 #include <kernel/functions.h>
 
-#include <mem/mem.h>
+#include <mem/state.h>
 #include <spdlog/fmt/bundled/printf.h>
 #include <sstream>
 
@@ -92,6 +90,10 @@ static std::string be_hex(uint32_t value) {
 }
 
 static std::string to_hex(uint32_t value) {
+    return fmt::format("{:0>8x}", value);
+}
+
+static std::string to_hex(SceUID value) {
     return fmt::format("{:0>8x}", value);
 }
 
@@ -168,6 +170,7 @@ static std::string cmd_reply_empty(HostState &state, PacketCommand &command) {
     return "";
 }
 
+// This function is not thread safe
 static SceUID select_thread(HostState &state, int thread_id) {
     if (thread_id == 0) {
         if (state.kernel.threads.empty())
@@ -178,6 +181,7 @@ static SceUID select_thread(HostState &state, int thread_id) {
 }
 
 static std::string cmd_set_current_thread(HostState &state, PacketCommand &command) {
+    const auto guard = std::lock_guard(state.kernel.mutex);
     int32_t thread_id = parse_hex(std::string(
         command.content_start + 2, static_cast<unsigned long>(command.content_length - 2)));
 
@@ -198,7 +202,7 @@ static std::string cmd_set_current_thread(HostState &state, PacketCommand &comma
 }
 
 static std::string cmd_get_current_thread(HostState &state, PacketCommand &command) {
-    return "QC" + to_hex(static_cast<uint32_t>(state.gdb.current_thread));
+    return "QC" + to_hex(state.gdb.current_thread);
 }
 
 static uint32_t fetch_reg(CPUState &state, uint32_t reg) {
@@ -279,6 +283,7 @@ static std::string cmd_read_registers(HostState &state, PacketCommand &command) 
 }
 
 static std::string cmd_write_registers(HostState &state, PacketCommand &command) {
+    const auto guard = std::lock_guard(state.kernel.mutex);
     if (state.gdb.current_thread == -1
         || state.kernel.threads.find(state.gdb.current_thread) == state.kernel.threads.end())
         return "E00";
@@ -296,6 +301,7 @@ static std::string cmd_write_registers(HostState &state, PacketCommand &command)
 }
 
 static std::string cmd_read_register(HostState &state, PacketCommand &command) {
+    const auto guard = std::lock_guard(state.kernel.mutex);
     if (state.gdb.current_thread == -1
         || state.kernel.threads.find(state.gdb.current_thread) == state.kernel.threads.end())
         return "E00";
@@ -309,6 +315,7 @@ static std::string cmd_read_register(HostState &state, PacketCommand &command) {
 }
 
 static std::string cmd_write_register(HostState &state, PacketCommand &command) {
+    const auto guard = std::lock_guard(state.kernel.mutex);
     if (state.gdb.current_thread == -1
         || state.kernel.threads.find(state.gdb.current_thread) == state.kernel.threads.end())
         return "E00";
@@ -410,6 +417,7 @@ static std::string cmd_detach(HostState &state, PacketCommand &command) { return
 
 static std::string cmd_continue(HostState &state, PacketCommand &command) {
     const std::string content = content_string(command);
+    const auto watch_delay = std::chrono::milliseconds(100);
 
     uint64_t index = 5;
     uint64_t next = 0;
@@ -426,42 +434,74 @@ static std::string cmd_continue(HostState &state, PacketCommand &command) {
         case 's':
         case 'S': {
             bool step = cmd == 's' || cmd == 'S';
-            if (colon != std::string::npos) {
-                const int32_t thread_id = parse_hex(text.substr(colon + 1));
 
-                if (state.kernel.threads.find(thread_id) == state.kernel.threads.end())
-                    return "E00";
+            // inferior_thread is the thread that trigerred breakpoint before
+            // step or run that thread
 
-                ThreadStatePtr thread = state.kernel.threads[thread_id];
-                if (thread) {
-                    thread->to_do = step ? ThreadToDo::step : ThreadToDo::run;
-                    thread->something_to_do.notify_one();
-                }
-            } else {
-                for (const auto &thread : state.kernel.threads) {
-                    if (thread.second) {
-                        thread.second->to_do = step ? ThreadToDo::step : ThreadToDo::run;
-                        thread.second->something_to_do.notify_one();
-                    }
-                    if (state.gdb.server_die)
-                        break;
-                }
+            if (state.gdb.inferior_thread != 0) {
+                const auto guard = std::lock_guard(state.kernel.mutex);
+                auto thread = state.kernel.threads[state.gdb.inferior_thread];
+                thread->to_do = step ? ThreadToDo::step : ThreadToDo::run;
+                thread->something_to_do.notify_one();
             }
 
             if (!step) {
-                bool hit_break = false;
-                while (!hit_break) {
-                    for (const auto &thread : state.kernel.threads) {
-                        if (thread.second->to_do == ThreadToDo::wait && hit_breakpoint(*thread.second->cpu)) {
-                            hit_break = true;
+                // resume the worlld
+                {
+                    const auto guard = std::lock_guard(state.kernel.mutex);
+                    for (const auto [id, thread] : state.kernel.threads) {
+                        if (thread->to_do == ThreadToDo::wait && hit_breakpoint(*thread->cpu)) {
+                            thread->to_do = ThreadToDo::run;
+                            thread->something_to_do.notify_one();
+                        }
+                    }
+                }
+                // wait until some thread triger breakpoint
+                bool did_break = false;
+                while (!did_break) {
+                    auto guard = std::unique_lock(state.kernel.mutex);
+
+                    if (state.gdb.server_die)
+                        return "";
+                    for (const auto [id, thread] : state.kernel.threads) {
+                        if (thread->to_do == ThreadToDo::wait && hit_breakpoint(*thread->cpu)) {
+                            state.gdb.inferior_thread = id;
+                            did_break = true;
                             break;
                         }
-                        if (state.gdb.server_die)
-                            break;
                     }
+
+                    guard.unlock();
+
+                    std::this_thread::sleep_for(std::chrono::milliseconds(watch_delay));
+                }
+
+                // stop the world
+                {
+                    const auto guard = std::lock_guard(state.kernel.mutex);
+                    for (const auto &thread : state.kernel.threads) {
+                        if (thread.second->to_do == ThreadToDo::run) {
+                            trigger_breakpoint(*thread.second->cpu);
+                        }
+                    }
+                }
+            } else {
+                // wait until stepping finish
+                // TODO use cond_variable
+                while (true) {
+                    auto guard = std::unique_lock(state.kernel.mutex);
+
+                    if (state.kernel.threads[state.gdb.inferior_thread]->to_do == ThreadToDo::wait) {
+                        break;
+                    }
+
+                    guard.unlock();
+
+                    std::this_thread::sleep_for(std::chrono::microseconds(100));
                 }
             }
 
+            state.gdb.current_thread = state.gdb.inferior_thread;
             return "S05";
         }
         default:
@@ -480,6 +520,7 @@ static std::string cmd_continue_supported(HostState &state, PacketCommand &comma
 }
 
 static std::string cmd_thread_alive(HostState &state, PacketCommand &command) {
+    const auto guard = std::lock_guard(state.kernel.mutex);
     const std::string content = content_string(command);
     const int32_t thread_id = parse_hex(content.substr(1));
 
@@ -505,21 +546,32 @@ static std::string cmd_thread_status(HostState &state, PacketCommand &command) {
 
 static std::string cmd_reason(HostState &state, PacketCommand &command) { return "S05"; }
 
-// TODO: Implement qsThreadInfo if list becomes too large.
-static std::string cmd_list_threads(HostState &state, PacketCommand &command) {
+static std::string cmd_get_first_thread(HostState &state, PacketCommand &command) {
+    const auto guard = std::lock_guard(state.kernel.mutex);
     std::stringstream stream;
 
     stream << "m";
+    stream << to_hex(state.kernel.threads.begin()->first);
 
-    uint32_t count = 0;
-    for (const auto &thread : state.kernel.threads) {
-        stream << to_hex(static_cast<uint32_t>(thread.first));
-        if (count != state.kernel.threads.size() - 1)
-            stream << ",";
-        count++;
+    state.gdb.thread_info_index = 0;
+
+    return stream.str();
+}
+
+static std::string cmd_get_next_thread(HostState &state, PacketCommand &command) {
+    const auto guard = std::lock_guard(state.kernel.mutex);
+    std::stringstream stream;
+
+    ++state.gdb.thread_info_index;
+    if (state.gdb.thread_info_index == state.kernel.threads.size()) {
+        stream << "l";
+    } else {
+        auto iter = state.kernel.threads.begin();
+        std::advance(iter, state.gdb.thread_info_index);
+
+        stream << "m";
+        stream << to_hex(iter->first);
     }
-
-    stream << "l";
 
     return stream.str();
 }
@@ -592,8 +644,8 @@ const static PacketFunctionBundle functions[] = {
     { "X", cmd_unimplemented }, // change cmd_unimplemented to cmd_write_binary to enable binary downloading
 
     // Query Packets
-    { "qfThreadInfo", cmd_list_threads },
-    { "qsThreadInfo", cmd_unimplemented },
+    { "qfThreadInfo", cmd_get_first_thread },
+    { "qsThreadInfo", cmd_get_next_thread },
     { "qSupported", cmd_supported },
     { "qAttached", cmd_attached },
     { "qTStatus", cmd_thread_status },
@@ -709,11 +761,12 @@ static void server_listen(HostState &state) {
         return;
     }
 
-    for (const auto &thread : state.kernel.threads) {
-        stop(*thread.second->cpu);
-        thread.second->to_do = ThreadToDo::wait;
+    {
+        const auto guard = std::lock_guard(state.kernel.mutex);
+        for (const auto &thread : state.kernel.threads) {
+            trigger_breakpoint(*thread.second->cpu);
+        }
     }
-
     LOG_INFO("GDB Server Received Connection");
 
     int64_t status;
@@ -778,5 +831,3 @@ void server_close(HostState &state) {
     if (state.gdb.server_thread && state.gdb.server_thread->get_id() != std::this_thread::get_id())
         state.gdb.server_thread->join();
 }
-
-#endif

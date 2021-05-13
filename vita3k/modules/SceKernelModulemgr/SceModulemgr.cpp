@@ -102,9 +102,8 @@ EXPORT(SceUID, _sceKernelLoadStartModule, const char *moduleFileName, SceSize ar
     if (!load_module(mod_id, entry_point, module, host, export_name, moduleFileName, error_val))
         return error_val;
 
-    auto inject = create_cpu_dep_inject(host);
     const SceUID thid = create_thread(entry_point.cast<const void>(), host.kernel, host.mem, module->module_name, SCE_KERNEL_DEFAULT_PRIORITY_USER,
-        static_cast<int>(SCE_KERNEL_STACK_SIZE_USER_DEFAULT), inject, nullptr);
+        static_cast<int>(SCE_KERNEL_STACK_SIZE_USER_DEFAULT), nullptr);
 
     const ThreadStatePtr thread = lock_and_find(thid, host.kernel.threads, host.kernel.mutex);
 
@@ -115,10 +114,7 @@ EXPORT(SceUID, _sceKernelLoadStartModule, const char *moduleFileName, SceSize ar
     if (pRes)
         *pRes = result;
 
-    thread->to_do = ThreadToDo::exit;
-    thread->something_to_do.notify_all(); // TODO Should this be notify_one()?
-    host.kernel.running_threads.erase(thid);
-    host.kernel.threads.erase(thid);
+    delete_thread(host.kernel, *thread);
 
     return mod_id;
 }

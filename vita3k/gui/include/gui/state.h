@@ -18,6 +18,7 @@
 #pragma once
 
 #include <dialog/state.h>
+#include <ime/state.h>
 #include <np/state.h>
 
 #include <imgui.h>
@@ -74,6 +75,7 @@ struct AppsSelector {
 };
 
 struct LiveAreaState {
+    bool app_close = false;
     bool app_selector = false;
     bool content_manager = false;
     bool information_bar = false;
@@ -89,6 +91,7 @@ struct FileMenuState {
     bool firmware_install_dialog = false;
     bool pkg_install_dialog = false;
     bool archive_install_dialog = false;
+    bool license_install_dialog = false;
 };
 
 struct DebugMenuState {
@@ -106,6 +109,7 @@ struct DebugMenuState {
 };
 
 struct ConfigurationMenuState {
+    bool custom_settings_dialog = false;
     bool settings_dialog = false;
 };
 
@@ -150,6 +154,7 @@ struct Lang {
     std::string user_lang;
     std::map<std::string, std::string> main_menubar;
     std::map<std::string, std::string> app_context;
+    std::map<std::string, std::string> game_data;
     std::map<std::string, std::string> indicator;
     std::map<std::string, std::string> settings;
     std::map<std::string, std::string> trophy_collection;

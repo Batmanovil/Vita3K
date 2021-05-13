@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2018 Vita3K team
+// Copyright (C) 2021 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -24,6 +24,7 @@
 #include <gxm/state.h>
 #include <host/sfo.h>
 #include <host/window.h>
+#include <ime/state.h>
 #include <io/state.h>
 #include <kernel/state.h>
 #include <net/state.h>
@@ -33,9 +34,7 @@
 #include <renderer/state.h>
 
 // The GDB Stub requires winsock.h on windows (included in above headers). Keep it here to prevent build errors.
-#ifdef USE_GDBSTUB
 #include <gdbstub/state.h>
-#endif
 
 #include <atomic>
 #include <memory>
@@ -62,6 +61,7 @@ struct HostState {
     std::string app_title;
     std::string app_title_id;
     std::string app_path;
+    int32_t app_sku_flag;
     std::string current_app_title;
     std::string base_path;
     std::string default_path;
@@ -72,6 +72,7 @@ struct HostState {
     std::string load_exec_path;
     std::string self_path;
     Config cfg;
+    std::unique_ptr<CPUProtocolBase> cpu_protocol;
     SceUID main_thread_id;
     size_t frame_count = 0;
     uint32_t sdl_ticks = 0;
@@ -95,9 +96,11 @@ struct HostState {
     NpState np;
     DisplayState display;
     DialogState common_dialog;
+    Ime ime;
     SfoFile sfo_handle;
     NIDSet missing_nids;
-#ifdef USE_GDBSTUB
+    float dpi_scale = 1.0f;
+    float res_width_dpi_scale;
+    float res_height_dpi_scale;
     GDBState gdb;
-#endif
 };

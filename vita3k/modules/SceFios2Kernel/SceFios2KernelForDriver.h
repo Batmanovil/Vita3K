@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2018 Vita3K team
+// Copyright (C) 2021 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -17,11 +17,19 @@
 
 #pragma once
 
-#include <util/types.h>
+#include <module/module.h>
 
-#include <functional>
-
-struct CPUState;
-struct HostState;
-
-using ImportFn = std::function<void(HostState &host, CPUState &cpu, SceUID thread_id)>;
+BRIDGE_DECL(ksceFiosKernelOverlayAdd)
+BRIDGE_DECL(ksceFiosKernelOverlayAddForProcess)
+BRIDGE_DECL(ksceFiosKernelOverlayGetInfo)
+BRIDGE_DECL(ksceFiosKernelOverlayGetInfoForProcess)
+BRIDGE_DECL(ksceFiosKernelOverlayGetList)
+BRIDGE_DECL(ksceFiosKernelOverlayGetRecommendedScheduler)
+BRIDGE_DECL(ksceFiosKernelOverlayModify)
+BRIDGE_DECL(ksceFiosKernelOverlayModifyForProcess)
+BRIDGE_DECL(ksceFiosKernelOverlayRemove)
+BRIDGE_DECL(ksceFiosKernelOverlayRemoveForProcess)
+BRIDGE_DECL(ksceFiosKernelOverlayResolveSync)
+BRIDGE_DECL(ksceFiosKernelOverlayResolveWithRangeSync)
+BRIDGE_DECL(ksceFiosKernelOverlayThreadIsDisabled)
+BRIDGE_DECL(ksceFiosKernelOverlayThreadSetDisabled)

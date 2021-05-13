@@ -1256,6 +1256,10 @@ struct GxmContextState {
     SceGxmPolygonMode front_polygon_mode = SCE_GXM_POLYGON_MODE_TRIANGLE_FILL;
     SceGxmPolygonMode back_polygon_mode = SCE_GXM_POLYGON_MODE_TRIANGLE_FILL;
 
+    // Fragment Program Mode
+    SceGxmFragmentProgramMode front_side_fragment_program_mode = SCE_GXM_FRAGMENT_PROGRAM_ENABLED;
+    SceGxmFragmentProgramMode back_side_fragment_program_mode = SCE_GXM_FRAGMENT_PROGRAM_ENABLED;
+
     // Line Width
     unsigned int front_point_line_width = 1;
     unsigned int back_point_line_width = 1;
@@ -1332,17 +1336,29 @@ using SceGxmVertexOutputTexCoordInfos = std::array<uint8_t, 10>;
 
 #pragma pack(push, 1)
 struct SceGxmProgramVertexVaryings {
-    std::uint8_t unk0[8];
-    std::uint8_t fragment_output_start; // this might be wrong
-    std::uint8_t unk1;
-    std::uint8_t output_param_type;
-    std::uint8_t output_comp_count;
+    union {
+        // Vertex Program variables
+        struct {
+            uint32_t attrib_pa_regs[2];
+            uint32_t untyped_pa_regs[2];
+        };
 
-    std::uint16_t varyings_count;
-    std::uint16_t pad0; // padding maybe
+        // Fragment Program Variables
+        struct {
+            std::uint8_t unk0[8];
+            std::uint8_t fragment_output_start; // this might be wrong
+            std::uint8_t unk1;
+            std::uint8_t output_param_type;
+            std::uint8_t output_comp_count;
+
+            std::uint16_t varyings_count;
+            std::uint16_t pad0; // Might be the number of non-dependent samplers
+        };
+    };
+
     std::uint32_t vertex_outputs1; // includes everything except texcoord outputs
     std::uint32_t vertex_outputs2; // includes texcoord outputs
-    std::uint32_t unk18;
+    std::uint32_t texcoord_pack_format; // 1 bit per texcoord. (0 - float, 1 - half)
     std::uint16_t semantic_index_offset;
     std::uint16_t semantic_instance_offset;
 };
@@ -1400,7 +1416,7 @@ struct SceGxmProgram {
 
     std::uint8_t major_version; //min 1
     std::uint8_t minor_version; //min 4
-    std::uint16_t unk6; //maybe padding
+    std::uint16_t sdk_version; // 0x350 - 3.50
 
     std::uint32_t size; //size of file - ignoring padding bytes at the end after SceGxmProgramParameter table
     std::uint32_t unkC;
@@ -1414,37 +1430,38 @@ struct SceGxmProgram {
     std::uint8_t special_flags;
     std::uint8_t unk17;
 
-    std::uint32_t unk18;
-    std::uint32_t unk1C;
+    std::uint32_t buffer_flags; // Buffer flags. 2 bits per buffer. 0x1 - loaded into registers. 0x2 - read from memory
 
-    std::uint32_t unk20; // bit 6 denotes whether a frag shader writes directly to output (usees __nativecolor modifier) or not
+    std::uint32_t texunit_flags1; // Tex unit flags. 4 bits per tex unit. 0x1 is non dependent read, 0x2 is dependent.
+    std::uint32_t texunit_flags2;
+
     std::uint32_t parameter_count;
     std::uint32_t parameters_offset; // Number of bytes from the start of this field to the first parameter.
     std::uint32_t varyings_offset; // offset to vertex outputs / fragment inputs, relative to this field
 
     std::uint16_t primary_reg_count; // (PAs)
     std::uint16_t secondary_reg_count; // (SAs)
-    std::uint16_t temp_reg_count1; //not sure // - verify this
-    std::uint16_t unk36;
-    std::uint16_t temp_reg_count2; //not sure // - verify this
-    std::uint16_t unk3A; //some item count?
+    std::uint32_t temp_reg_count1;
+    std::uint16_t temp_reg_count2; //Temp reg count in selective rate(programmable blending) phase
+    std::uint16_t unk3A; //some item count? Might be the number of primary program phases
 
     std::uint32_t primary_program_instr_count;
     std::uint32_t primary_program_offset;
 
-    std::uint32_t unk44;
-
+    std::uint32_t secondary_program_instr_count;
     std::uint32_t secondary_program_offset; // relative to the beginning of this field
     std::uint32_t secondary_program_offset_end; // relative to the beginning of this field
 
-    std::uint32_t unk_50; //usually zero?
-    std::uint32_t unk_54; //usually zero?
-    std::uint32_t unk_58; //usually zero?
-    std::uint32_t unk_5C; //usually zero?
+    std::uint32_t scratch_buffer_count;
+    std::uint32_t thread_buffer_count;
+    std::uint32_t literal_buffer_count;
 
-    std::uint32_t unk_60;
+    std::uint32_t data_buffer_count;
+    std::uint32_t texture_buffer_count;
     std::uint32_t default_uniform_buffer_count;
-    std::uint32_t unk_68;
+
+    std::uint32_t literal_buffer_data_offset;
+
     std::uint32_t unk_6C;
 
     std::uint32_t literals_count;
@@ -1454,10 +1471,11 @@ struct SceGxmProgram {
 
     std::uint32_t dependent_sampler_count;
     std::uint32_t dependent_sampler_offset;
-    std::uint32_t unk_88;
-    std::uint32_t unk_8C;
+    std::uint32_t texture_buffer_dependent_sampler_count;
+    std::uint32_t texture_buffer_dependent_sampler_offset;
     std::uint32_t container_count;
     std::uint32_t container_offset;
+    std::uint32_t sampler_query_info_offset; // Offset to array of uint16_t
 
     SceGxmProgramType get_type() const {
         return static_cast<SceGxmProgramType>(type & 1);
@@ -1492,13 +1510,14 @@ struct SceGxmProgram {
     bool is_frag_color_used() const {
         return ((type >> 7) & 1);
     }
+    const SceGxmProgramVertexVaryings *vertex_varyings() const {
+        return reinterpret_cast<const SceGxmProgramVertexVaryings *>(varyings_offset ? reinterpret_cast<const std::uint8_t *>(&varyings_offset) + varyings_offset : nullptr);
+    }
     SceGxmParameterType get_fragment_output_type() const {
-        return static_cast<const SceGxmParameterType>(reinterpret_cast<const SceGxmProgramVertexVaryings *>(
-            reinterpret_cast<const std::uint8_t *>(&varyings_offset) + varyings_offset)
-                                                          ->output_param_type);
+        return static_cast<const SceGxmParameterType>(vertex_varyings()->output_param_type);
     }
     std::uint8_t get_fragment_output_component_count() const {
-        return reinterpret_cast<const SceGxmProgramVertexVaryings *>(reinterpret_cast<const std::uint8_t *>(&varyings_offset) + varyings_offset)->output_comp_count;
+        return vertex_varyings()->output_comp_count;
     }
     bool is_secondary_program_available() const {
         return secondary_program_offset < secondary_program_offset_end + 4;

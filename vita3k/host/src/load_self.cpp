@@ -22,7 +22,6 @@
 #include <kernel/relocation.h>
 #include <kernel/state.h>
 #include <kernel/types.h>
-#include <mem/mem.h>
 
 #include <nids/functions.h>
 #include <util/arm.h>
@@ -57,7 +56,6 @@
 using namespace ELFIO;
 
 static constexpr bool LOG_MODULE_LOADING = false;
-static constexpr bool DUMP_SEGMENTS = false;
 
 static bool load_var_imports(const uint32_t *nids, const Ptr<uint32_t> *entries, size_t count, const SegmentInfosForReloc &segments, KernelState &kernel, MemState &mem, const Config &cfg) {
     struct VarImportsHeader {
@@ -120,6 +118,8 @@ static bool load_func_imports(const uint32_t *nids, const Ptr<uint32_t> *entries
 
         const ExportNids::iterator export_address = kernel.export_nids.find(nid);
         uint32_t *const stub = entry.get(mem);
+        // TODO resurrect this
+        /*
         switch (IMPORT_CALL_LOG_LEVEL) {
         case LogCallAndReturn: {
             stub[0] = 0xef000053; // svc #53 - Call our interrupt hook.
@@ -133,22 +133,17 @@ static bool load_func_imports(const uint32_t *nids, const Ptr<uint32_t> *entries
             stub[2] = nid; // Our interrupt hook will read this.
             break;
         }
-        case None: {
-            if (export_address == kernel.export_nids.end()) {
-                // TODO replace these into non-interrupt ones like below when the weak module is loaded
-                stub[0] = 0xef000000; // svc #0 - Call our interrupt hook.
-                stub[1] = 0xe1a0f00e; // mov pc, lr - Return to the caller.
-                stub[2] = nid; // Our interrupt hook will read this.
-            } else {
-                Address func_address = export_address->second;
-                stub[0] = encode_arm_inst(INSTRUCTION_MOVW, (uint16_t)func_address, 12);
-                stub[1] = encode_arm_inst(INSTRUCTION_MOVT, (uint16_t)(func_address >> 16), 12);
-                stub[2] = encode_arm_inst(INSTRUCTION_BRANCH, 0, 12);
-            }
-            break;
-        }
-        default:
-            assert(false);
+        */
+
+        if (export_address == kernel.export_nids.end()) {
+            stub[0] = 0xef000000; // svc #0 - Call our interrupt hook.
+            stub[1] = 0xe1a0f00e; // mov pc, lr - Return to the caller.
+            stub[2] = nid; // Our interrupt hook will read this.
+        } else {
+            Address func_address = export_address->second;
+            stub[0] = encode_arm_inst(INSTRUCTION_MOVW, (uint16_t)func_address, 12);
+            stub[1] = encode_arm_inst(INSTRUCTION_MOVT, (uint16_t)(func_address >> 16), 12);
+            stub[2] = encode_arm_inst(INSTRUCTION_BRANCH, 0, 12);
         }
     }
     return true;
@@ -353,17 +348,6 @@ SceUID load_self(Ptr<const void> &entry_point, KernelState &kernel, MemState &me
             return seg_header.p_type == PT_LOAD ? "LOAD" : (seg_header.p_type == PT_LOOS ? "LOOS" : "UNKNOWN");
         };
 
-        auto dump_segment = [&](const uint8_t *const seg_data) {
-            constexpr auto DUMP_DIR = "seg_dump";
-            fs::create_directory(DUMP_DIR);
-
-            const auto filename = fs::path(fmt::format("{}/{}_seg{}_{}", DUMP_DIR, fs::path(self_path).filename().stem().string(),
-                seg_index, get_seg_header_string()));
-
-            std::ofstream out(filename.string(), std::ios::out | std::ios::binary);
-            out.write((char *)seg_data, seg_header.p_filesz);
-        };
-
         LOG_DEBUG_IF(LOG_MODULE_LOADING, "    [{}] (p_type: {}): p_offset: {}, p_vaddr: {}, p_paddr: {}, p_filesz: {}, p_memsz: {}, p_flags: {}, p_align: {}", get_seg_header_string(), log_hex(seg_header.p_type), log_hex(seg_header.p_offset), log_hex(seg_header.p_vaddr), log_hex(seg_header.p_paddr), log_hex(seg_header.p_filesz), log_hex(seg_header.p_memsz), log_hex(seg_header.p_flags), log_hex(seg_header.p_align));
         assert(seg_infos[seg_index].encryption == 2);
         if (seg_header.p_type == PT_LOAD) {
@@ -391,9 +375,6 @@ SceUID load_self(Ptr<const void> &entry_point, KernelState &kernel, MemState &me
                     memcpy(seg_addr.get(mem), seg_bytes, seg_header.p_filesz);
                 }
 
-                if (DUMP_SEGMENTS)
-                    dump_segment(seg_addr.get(mem));
-
                 segment_reloc_info[seg_index] = { segment_address, seg_header.p_vaddr, seg_header.p_memsz };
             }
         } else if (seg_header.p_type == PT_LOOS) {
@@ -408,18 +389,36 @@ SceUID load_self(Ptr<const void> &entry_point, KernelState &kernel, MemState &me
                     return -1;
                 }
 
-                if (DUMP_SEGMENTS)
-                    dump_segment(uncompressed.get());
             } else {
                 if (!relocate(seg_bytes, seg_header.p_filesz, segment_reloc_info, mem)) {
                     return -1;
                 }
-                if (DUMP_SEGMENTS)
-                    dump_segment(seg_bytes);
             }
         } else {
             LOG_CRITICAL("Unknown segment type {}", log_hex(seg_header.p_type));
         }
+    }
+
+    if (cfg.dump_elfs) {
+        // Dump elf
+        std::vector<uint8_t> dump_elf(self_bytes + self_header.header_len, self_bytes + self_header.self_filesize);
+        Elf32_Phdr *dump_segments = reinterpret_cast<Elf32_Phdr *>(dump_elf.data() + elf.e_phoff);
+        uint16_t last_index = 0;
+        for (const auto [seg_index, segment] : segment_reloc_info) {
+            uint8_t *seg_bytes = Ptr<uint8_t>(segment.addr).get(mem);
+            memcpy(dump_elf.data() + dump_segments[seg_index].p_offset, seg_bytes, dump_segments[seg_index].p_filesz);
+            dump_segments[seg_index].p_vaddr = segment.addr;
+            last_index = std::max(seg_index, last_index);
+        }
+        constexpr auto DUMP_DIR = "elfdumps";
+        fs::create_directory(DUMP_DIR);
+        const auto start = dump_segments[0].p_vaddr;
+        const auto end = dump_segments[last_index].p_vaddr + dump_segments[last_index].p_filesz;
+        const auto elf_name = fs::path(self_path).filename().stem().string();
+        const auto filename = fs::path(fmt::format("{}/{}-{}_{}.elf", DUMP_DIR, log_hex_full(start), log_hex_full(end), elf_name));
+        std::ofstream out(filename.string(), std::ios::out | std::ios::binary);
+        out.write(reinterpret_cast<char *>(dump_elf.data()), dump_elf.size());
+        out.close();
     }
 
     const unsigned int module_info_segment_index = static_cast<unsigned int>(elf.e_entry >> 30);

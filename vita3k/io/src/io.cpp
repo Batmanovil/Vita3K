@@ -380,6 +380,8 @@ int write_file(SceUID fd, const void *data, const SceSize size, const IOState &i
     }
 
     const auto file = io.std_files.find(fd);
+    if (file == io.std_files.end())
+        return IO_ERROR(SCE_ERROR_ERRNO_EBADFD);
 
     if (!fs::is_directory(file->second.get_system_location().parent_path())) {
         return IO_ERROR(SCE_ERROR_ERRNO_ENOENT); // TODO: Is it the right error code?
@@ -399,6 +401,8 @@ int truncate_file(const SceUID fd, unsigned long long length, const IOState &io,
         return IO_ERROR(SCE_ERROR_ERRNO_EBADFD);
 
     const auto file = io.std_files.find(fd);
+    if (file == io.std_files.end())
+        return IO_ERROR(SCE_ERROR_ERRNO_EBADFD);
     auto trunc = file->second.truncate(length);
     LOG_TRACE_IF(log_file_op, "{}: Truncating fd: {}, to size: {}", export_name, log_hex(fd), length);
     return trunc;
@@ -412,6 +416,8 @@ SceOff seek_file(const SceUID fd, const SceOff offset, const SceIoSeekMode whenc
         return IO_ERROR(SCE_ERROR_ERRNO_EBADFD);
 
     const auto file = io.std_files.find(fd);
+    if (file == io.std_files.end())
+        return IO_ERROR(SCE_ERROR_ERRNO_EBADFD);
     if (!file->second.seek(offset, whence))
         return IO_ERROR(SCE_ERROR_ERRNO_EBADFD);
 
@@ -442,7 +448,7 @@ SceOff tell_file(IOState &io, const SceUID fd, const char *export_name) {
     return std_file->second.tell();
 }
 
-int stat_file(IOState &io, const char *file, SceIoStat *statp, const std::wstring &pref_path, SceUInt64 base_tick, const char *export_name,
+int stat_file(IOState &io, const char *file, SceIoStat *statp, const std::wstring &pref_path, const char *export_name,
     const SceUID fd) {
     assert(statp != nullptr);
 
@@ -541,7 +547,7 @@ int stat_file(IOState &io, const char *file, SceIoStat *statp, const std::wstrin
     return 0;
 }
 
-int stat_file_by_fd(IOState &io, const SceUID fd, SceIoStat *statp, const std::wstring &pref_path, SceUInt64 base_tick, const char *export_name) {
+int stat_file_by_fd(IOState &io, const SceUID fd, SceIoStat *statp, const std::wstring &pref_path, const char *export_name) {
     assert(statp != nullptr);
     memset(statp, '\0', sizeof(SceIoStat));
 
@@ -550,7 +556,7 @@ int stat_file_by_fd(IOState &io, const SceUID fd, SceIoStat *statp, const std::w
         return IO_ERROR(SCE_ERROR_ERRNO_EBADFD);
     }
 
-    return stat_file(io, std_file->second.get_vita_loc(), statp, pref_path, base_tick, export_name, fd);
+    return stat_file(io, std_file->second.get_vita_loc(), statp, pref_path, export_name, fd);
 }
 
 int close_file(IOState &io, const SceUID fd, const char *export_name) {
@@ -639,7 +645,7 @@ SceUID open_dir(IOState &io, const char *path, const std::wstring &pref_path, co
     return fd;
 }
 
-SceUID read_dir(IOState &io, const SceUID fd, SceIoDirent *dent, const std::wstring &pref_path, const SceUInt64 base_tick, const char *export_name) {
+SceUID read_dir(IOState &io, const SceUID fd, SceIoDirent *dent, const std::wstring &pref_path, const char *export_name) {
     assert(dent != nullptr);
 
     memset(dent->d_name, '\0', sizeof(dent->d_name));
@@ -663,12 +669,12 @@ SceUID read_dir(IOState &io, const SceUID fd, SceIoDirent *dent, const std::wstr
             const auto file_path = std::string(dir->second.get_vita_loc()) + '/' + d_name_utf8;
 
             LOG_TRACE_IF(log_file_op, "{}: Reading entry {} of fd: {}", export_name, file_path, log_hex(fd));
-            if (stat_file(io, file_path.c_str(), &dent->d_stat, pref_path, base_tick, export_name) < 0)
+            if (stat_file(io, file_path.c_str(), &dent->d_stat, pref_path, export_name) < 0)
                 return IO_ERROR(SCE_ERROR_ERRNO_EMFILE);
             else
                 return 1; // move to the next file
         }
-        return read_dir(io, fd, dent, pref_path, base_tick, export_name);
+        return read_dir(io, fd, dent, pref_path, export_name);
     }
 
     return IO_ERROR(SCE_ERROR_ERRNO_EBADFD);

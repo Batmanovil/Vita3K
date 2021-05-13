@@ -24,8 +24,7 @@
 #include <shader/usse_translator.h>
 #include <shader/usse_translator_types.h>
 #include <util/log.h>
-
-#include <boost/optional/optional.hpp>
+#include <util/optional.h>
 
 #include <map>
 
@@ -35,7 +34,7 @@ template <typename Visitor>
 using USSEMatcher = shader::decoder::Matcher<Visitor, uint64_t>;
 
 template <typename V>
-boost::optional<const USSEMatcher<V> &> DecodeUSSE(uint64_t instruction) {
+static optional<const USSEMatcher<V>> DecodeUSSE(uint64_t instruction) {
     static const std::vector<USSEMatcher<V>> table = {
 #define INST(fn, name, bitstring) shader::decoder::detail::detail<USSEMatcher<V>>::GetMatcher(fn, name, bitstring)
         // clang-format off
@@ -737,7 +736,12 @@ boost::optional<const USSEMatcher<V> &> DecodeUSSE(uint64_t instruction) {
     const auto matches_instruction = [instruction](const auto &matcher) { return matcher.Matches(instruction); };
 
     auto iter = std::find_if(table.begin(), table.end(), matches_instruction);
-    return iter != table.end() ? boost::optional<const USSEMatcher<V> &>(*iter) : boost::none;
+    return iter != table.end() ? optional<const USSEMatcher<V>>(*iter) :
+#ifdef VITA3K_CPP17
+                               std::nullopt;
+#else
+                               boost::none;
+#endif
 }
 
 //
@@ -830,7 +834,7 @@ spv::Function *USSERecompiler::get_or_recompile_block(const usse::USSEBlock &blo
 
             // Recompile the instruction, to the current block
             auto decoder = usse::DecodeUSSE<usse::USSETranslatorVisitor>(cur_instr);
-            if (decoder)
+            if (decoder.has_value())
                 decoder->call(visitor, cur_instr);
             else
                 LOG_DISASM("{:016x}: error: instruction unmatched", cur_instr);
@@ -860,7 +864,7 @@ spv::Function *USSERecompiler::get_or_recompile_block(const usse::USSEBlock &blo
 }
 
 void convert_gxp_usse_to_spirv(spv::Builder &b, const SceGxmProgram &program, const FeatureState &features, const SpirvShaderParameters &parameters, utils::SpirvUtilFunctions &utils,
-    spv::Function *end_hook_func, const NonDependentTextureQueryCallInfos &queries) {
+    spv::Function *begin_hook_func, spv::Function *end_hook_func, const NonDependentTextureQueryCallInfos &queries) {
     const uint64_t *primary_program = program.primary_program_start();
     const uint64_t primary_program_instr_count = program.primary_program_instr_count;
 
@@ -874,6 +878,9 @@ void convert_gxp_usse_to_spirv(spv::Builder &b, const SceGxmProgram &program, co
 
     // Collect instructions of Sample rate (secondary) phase
     shader_code[ShaderPhase::SampleRate] = std::make_pair(secondary_program_start, secondary_program_end - secondary_program_start);
+
+    if (begin_hook_func)
+        b.createFunctionCall(begin_hook_func, {});
 
     // Decode and recompile
     // TODO: Reuse this

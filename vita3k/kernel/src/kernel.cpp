@@ -16,43 +16,46 @@
 // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
 #include <kernel/functions.h>
-
 #include <kernel/state.h>
+#include <kernel/thread/thread_functions.h>
 #include <kernel/thread/thread_state.h>
 
 #include <cpu/functions.h>
-#include <mem/mem.h>
 #include <mem/ptr.h>
-
-#include <spdlog/fmt/fmt.h>
-
 #include <util/find.h>
 #include <util/log.h>
 
-Ptr<Ptr<void>> get_thread_tls_addr(KernelState &kernel, MemState &mem, SceUID thread_id, int key) {
-    SlotToAddress &slot_to_address = kernel.tls[thread_id];
+#include <spdlog/fmt/fmt.h>
 
-    const SlotToAddress::const_iterator existing = slot_to_address.find(key);
-    if (existing != slot_to_address.end()) {
-        return existing->second;
+bool init(KernelState &kernel, MemState &mem, int cpu_pool_size, CPUProtocolBase *cpu_protocol, CPUBackend cpu_backend) {
+    for (int i = 0; i < cpu_pool_size; ++i) {
+        auto item = init_cpu(cpu_backend, 0, 0, 0, mem, cpu_protocol);
+        kernel.cpu_pool.add(std::move(item));
     }
-    assert(key <= 0x800 / 4);
-    const ThreadStatePtr thread = util::find(thread_id, kernel.threads);
-    Address tls = read_tpidruro(*thread->cpu) - 0x800 + key * 4;
-    const Ptr<Ptr<void>> address(tls);
-    slot_to_address.insert(SlotToAddress::value_type(key, address));
+
+    kernel.exclusive_monitor = new_exclusive_monitor(100);
+    kernel.start_tick = { rtc_base_ticks() };
+    kernel.base_tick = { rtc_base_ticks() };
+    kernel.cpu_protocol = cpu_protocol;
+    return true;
+}
+
+Ptr<Ptr<void>> get_thread_tls_addr(KernelState &kernel, MemState &mem, SceUID thread_id, int key) {
+    Ptr<Ptr<void>> address(0);
+    //magic numbers taken from decompiled source. There is 0x400 unused bytes of unknown usage
+    if (key <= 0x100 && key >= 0) {
+        const ThreadStatePtr thread = util::find(thread_id, kernel.threads);
+        address = thread->tls.get_ptr<Ptr<void>>() + key;
+    } else {
+        LOG_ERROR("Wrong tls slot index. TID:{} index:{}", thread_id, key);
+    }
     return address;
 }
 
 void stop_all_threads(KernelState &kernel) {
     const std::lock_guard<std::mutex> lock(kernel.mutex);
     for (ThreadStatePtrs::iterator thread = kernel.threads.begin(); thread != kernel.threads.end(); ++thread) {
-        {
-            const std::lock_guard<std::mutex> lock2(thread->second->mutex);
-            thread->second->to_do = ThreadToDo::exit;
-        }
-        thread->second->something_to_do.notify_all();
-        stop(*thread->second->cpu);
+        exit_thread(*thread->second);
     }
 }
 
@@ -77,17 +80,17 @@ Address get_watch_memory_addr(KernelState &state, Address addr) {
 void update_watches(KernelState &state) {
     for (const auto &thread : state.threads) {
         auto &cpu = *thread.second->cpu;
-        if (state.watch_code != log_code_exists(cpu)) {
+        if (state.watch_code != get_log_code(cpu)) {
             if (state.watch_code)
-                log_code_add(cpu);
+                set_log_code(cpu, true);
             else
-                log_code_remove(cpu);
+                set_log_code(cpu, false);
         }
-        if (state.watch_memory != log_mem_exists(cpu)) {
+        if (state.watch_memory != get_log_mem(cpu)) {
             if (state.watch_memory)
-                log_mem_add(cpu);
+                set_log_mem(cpu, true);
             else
-                log_mem_remove(cpu);
+                set_log_mem(cpu, false);
         }
     }
 }

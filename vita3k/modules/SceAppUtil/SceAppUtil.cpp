@@ -1,5 +1,5 @@
 // Vita3K emulator project
-// Copyright (C) 2018 Vita3K team
+// Copyright (C) 2021 Vita3K team
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -90,25 +90,42 @@ EXPORT(int, sceAppUtilAppEventParseWebBrowser) {
     return UNIMPLEMENTED();
 }
 
-EXPORT(int, sceAppUtilAppParamGetInt) {
-    return UNIMPLEMENTED();
+EXPORT(SceInt32, sceAppUtilAppParamGetInt, SceAppUtilAppParamId paramId, SceInt32 *value) {
+    if (paramId != SCE_APPUTIL_APPPARAM_ID_SKU_FLAG)
+        return RET_ERROR(SCE_APPUTIL_ERROR_PARAMETER);
+
+    if (!value)
+        return RET_ERROR(SCE_APPUTIL_ERROR_NOT_INITIALIZED);
+
+    *value = host.app_sku_flag;
+
+    return 0;
 }
 
 EXPORT(int, sceAppUtilBgdlGetStatus) {
     return UNIMPLEMENTED();
 }
 
-EXPORT(int, sceAppUtilDrmClose) {
-    return UNIMPLEMENTED();
+static bool is_addcont_exist(HostState &host, const SceChar8 *path) {
+    const auto drm_content_id_path{ fs::path(host.pref_path) / (+VitaIoDevice::ux0)._to_string() / host.io.device_paths.addcont0 / reinterpret_cast<const char *>(path) };
+    return (fs::exists(drm_content_id_path) && (!fs::is_empty(drm_content_id_path)));
+}
+
+EXPORT(SceInt32, sceAppUtilDrmClose, const SceAppUtilDrmAddcontId *dirName, const SceAppUtilMountPoint *mountPoint) {
+    if (!dirName)
+        return RET_ERROR(SCE_APPUTIL_ERROR_PARAMETER);
+
+    if (!is_addcont_exist(host, dirName->data))
+        return RET_ERROR(SCE_APPUTIL_ERROR_NOT_MOUNTED);
+
+    return 0;
 }
 
 EXPORT(SceInt32, sceAppUtilDrmOpen, const SceAppUtilDrmAddcontId *dirName, const SceAppUtilMountPoint *mountPoint) {
     if (!dirName)
         return RET_ERROR(SCE_APPUTIL_ERROR_PARAMETER);
 
-    const auto drm_content_id_path{ fs::path(host.pref_path) / (+VitaIoDevice::ux0)._to_string() / host.io.device_paths.addcont0 / reinterpret_cast<const char *>(dirName->data) };
-
-    if (!fs::exists(drm_content_id_path) || (fs::is_empty(drm_content_id_path)))
+    if (!is_addcont_exist(host, dirName->data))
         return SCE_ERROR_ERRNO_ENOENT;
 
     return 0;

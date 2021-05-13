@@ -560,26 +560,61 @@ spv::Id shader::usse::utils::load(spv::Builder &b, const SpirvShaderParameters &
     spv::Id type_f32 = b.makeFloatType(32);
 
     if (op.bank == RegisterBank::FPCONSTANT) {
+        const bool integral = (op.type == DataType::UINT32) || (op.type == DataType::UINT16);
         std::vector<spv::Id> consts;
 
+        auto handle_unexpect_swizzle = [&](const SwizzleChannel ch, const bool integral) {
+#define GEN_CONSTANT(cnst)                                           \
+    if (integral)                                                    \
+        return b.makeUintConstant(static_cast<std::uint32_t>(cnst)); \
+    else                                                             \
+        return b.makeFloatConstant(static_cast<float>(cnst))
+            switch (ch) {
+            case SwizzleChannel::_0:
+                GEN_CONSTANT(0);
+                break;
+            case SwizzleChannel::_1:
+                GEN_CONSTANT(1);
+                break;
+            case SwizzleChannel::_2:
+                GEN_CONSTANT(2);
+                break;
+            case SwizzleChannel::_H:
+                GEN_CONSTANT(0.5f);
+                break;
+            default: break;
+            }
+
+            return spv::NoResult;
+
+#undef GEN_CONSTANT
+        };
+
         // Load constants. Ignore mask
-        if (op.type == DataType::F32) {
+        if ((op.type == DataType::F32) || (op.type == DataType::UINT32)) {
             auto get_f32_from_bank = [&](const int num) -> spv::Id {
                 int swizz_val = static_cast<int>(op.swizzle[num]) - static_cast<int>(SwizzleChannel::_X);
+                std::uint32_t value = 0;
+
                 switch (swizz_val >> 1) {
                 case 0: {
-                    return b.makeFloatConstant(*reinterpret_cast<const float *>(&usse::f32_constant_table_bank_0_raw[op.num + (swizz_val & 1)]));
-                }
-
-                case 1: {
-                    return b.makeFloatConstant(*reinterpret_cast<const float *>(&usse::f32_constant_table_bank_1_raw[op.num + (swizz_val & 1)]));
-                }
-
-                default:
+                    value = usse::f32_constant_table_bank_0_raw[op.num + (swizz_val & 1)];
                     break;
                 }
 
-                return spv::NoResult;
+                case 1: {
+                    value = usse::f32_constant_table_bank_1_raw[op.num + (swizz_val & 1)];
+                    break;
+                }
+
+                default:
+                    return handle_unexpect_swizzle(op.swizzle[num], integral);
+                }
+
+                if (integral)
+                    return b.makeUintConstant(value);
+
+                return b.makeFloatConstant(*reinterpret_cast<const float *>(&value));
             };
 
             for (int i = 0; i < 4; i++) {
@@ -587,36 +622,41 @@ spv::Id shader::usse::utils::load(spv::Builder &b, const SpirvShaderParameters &
                     consts.push_back(get_f32_from_bank(i));
                 }
             }
-        } else if (op.type == DataType::F16) {
+        } else if ((op.type == DataType::F16) || (op.type == DataType::UINT16)) {
             auto get_f16_from_bank = [&](const int num) -> spv::Id {
                 const int swizz_val = static_cast<int>(op.swizzle[num]) - static_cast<int>(SwizzleChannel::_X);
+                float value = 0;
 
                 switch (swizz_val & 3) {
                 case 0: {
-                    return b.makeFloatConstant(
-                        usse::f16_constant_table_bank0[op.num]);
-                }
-
-                case 1: {
-                    return b.makeFloatConstant(
-                        usse::f16_constant_table_bank1[op.num]);
-                }
-
-                case 2: {
-                    return b.makeFloatConstant(
-                        usse::f16_constant_table_bank2[op.num]);
-                }
-
-                case 3: {
-                    return b.makeFloatConstant(
-                        usse::f16_constant_table_bank3[op.num]);
-                }
-
-                default:
+                    value = usse::f16_constant_table_bank0[op.num];
                     break;
                 }
 
-                return spv::NoResult;
+                case 1: {
+                    value = usse::f16_constant_table_bank1[op.num];
+                    break;
+                }
+
+                case 2: {
+                    value = usse::f16_constant_table_bank2[op.num];
+                    break;
+                }
+
+                case 3: {
+                    value = usse::f16_constant_table_bank3[op.num];
+                    break;
+                }
+
+                default:
+                    return handle_unexpect_swizzle(op.swizzle[num], integral);
+                }
+
+                if (integral) {
+                    return b.makeUintConstant(*reinterpret_cast<const std::uint32_t *>(&value));
+                }
+
+                return b.makeFloatConstant(value);
             };
 
             for (int i = 0; i < 4; i++) {
@@ -948,7 +988,9 @@ void shader::usse::utils::store(spv::Builder &b, const SpirvShaderParameters &pa
 
     spv::Id type_f32 = b.makeFloatType(32);
 
-    if (dest.type == DataType::UINT32 || dest.type == DataType::INT32) {
+    // FPINTERNAL bank can't pack, always store 32-bit. So bitcast
+    if (((dest.bank == RegisterBank::FPINTERNAL) && is_integer_data_type(dest.type))
+        || ((dest.bank != RegisterBank::FPINTERNAL) && ((dest.type == DataType::UINT32) || (dest.type == DataType::INT32)))) {
         std::vector<spv::Id> ops{ source };
         spv::Id bitcast_type = utils::make_vector_or_scalar_type(b, type_f32, total_comp_source);
 

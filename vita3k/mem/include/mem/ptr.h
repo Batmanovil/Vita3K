@@ -17,7 +17,10 @@
 
 #pragma once
 
-#include <mem/mem.h>
+#include <cassert>
+#include <mem/atomic.h>
+#include <mem/functions.h>
+#include <mem/state.h>
 
 template <class T>
 class Ptr {
@@ -60,6 +63,17 @@ public:
             return nullptr;
         } else {
             return reinterpret_cast<T *>(&mem.memory[addr]);
+        }
+    }
+
+    template <class U>
+    bool atomic_compare_and_swap(MemState &mem, U value, U expected) {
+        if constexpr (std::is_arithmetic_v<U>) {
+            static_assert(std::is_same<U, T>::value);
+            const auto ptr = reinterpret_cast<volatile U *>(&mem.memory[addr]);
+            return ::atomic_compare_and_swap(ptr, value, expected);
+        } else {
+            assert(false);
         }
     }
 

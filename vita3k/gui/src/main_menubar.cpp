@@ -42,6 +42,7 @@ static void draw_file_menu(GuiState &gui, HostState &host) {
         ImGui::MenuItem(is_lang ? lang["install_firmware"].c_str() : "Install Firmware", nullptr, &gui.file_menu.firmware_install_dialog);
         ImGui::MenuItem(is_lang ? lang["install_pkg"].c_str() : "Install .pkg", nullptr, &gui.file_menu.pkg_install_dialog);
         ImGui::MenuItem(is_lang ? lang["install_zip"].c_str() : "Install .zip, .vpk", nullptr, &gui.file_menu.archive_install_dialog);
+        ImGui::MenuItem(!lang["install_license"].empty() ? lang["install_license"].c_str() : "Install License", nullptr, &gui.file_menu.license_install_dialog);
         ImGui::EndMenu();
     }
 }
@@ -74,8 +75,11 @@ static void draw_debug_menu(DebugMenuState &state) {
 static void draw_config_menu(GuiState &gui, HostState &host) {
     auto lang = gui.lang.main_menubar;
     const auto is_lang = !lang.empty();
+    const auto CUSTOM_CONFIG_PATH{ fs::path(host.base_path) / "config" / fmt::format("config_{}.xml", host.io.app_path) };
+    const auto is_custom = !host.io.app_path.empty() && fs::exists(CUSTOM_CONFIG_PATH);
     if (ImGui::BeginMenu(is_lang ? lang["configuration"].c_str() : "Configuration")) {
-        ImGui::MenuItem(is_lang ? lang["settings"].c_str() : "Settings", nullptr, &gui.configuration_menu.settings_dialog);
+        if (ImGui::MenuItem(is_lang ? lang["settings"].c_str() : "Settings", nullptr, is_custom ? &gui.configuration_menu.custom_settings_dialog : &gui.configuration_menu.settings_dialog))
+            init_custom_config(gui, host, host.io.app_path);
         if (ImGui::MenuItem(is_lang ? lang["user_management"].c_str() : "User Management", nullptr, &gui.live_area.user_management, (!gui.live_area.user_management && host.io.title_id.empty()))) {
             gui.live_area.app_selector = false;
             gui.live_area.information_bar = true;
@@ -105,6 +109,7 @@ static void draw_help_menu(GuiState &gui) {
 
 void draw_main_menu_bar(GuiState &gui, HostState &host) {
     if (ImGui::BeginMainMenuBar()) {
+        ImGui::SetWindowFontScale(ImGui::GetIO().DisplaySize.x / host.res_width_dpi_scale);
         ImGui::PushStyleColor(ImGuiCol_Text, GUI_COLOR_TEXT_MENUBAR);
 
         draw_file_menu(gui, host);

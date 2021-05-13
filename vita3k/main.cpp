@@ -17,12 +17,14 @@
 
 #include "interface.h"
 
+#include "cpu_protocol.h"
 #include <app/functions.h>
 #include <app/screen_render.h>
 #include <config/functions.h>
 #include <config/version.h>
 #include <gui/functions.h>
 #include <gui/state.h>
+#include <host/functions.h>
 #include <host/pkg.h>
 #include <host/state.h>
 #include <modules/module_parent.h>
@@ -61,18 +63,18 @@ int main(int argc, char *argv[]) {
     HostState host;
     if (const auto err = config::init_config(cfg, argc, argv, root_paths) != Success) {
         if (err == QuitRequested) {
-            if (cfg.recompile_shader_path.is_initialized()) {
+            if (cfg.recompile_shader_path.has_value()) {
                 LOG_INFO("Recompiling {}", *cfg.recompile_shader_path);
                 shader::convert_gxp_to_glsl_from_filepath(*cfg.recompile_shader_path);
             }
-            if (cfg.delete_title_id.is_initialized()) {
+            if (cfg.delete_title_id.has_value()) {
                 LOG_INFO("Deleting title id {}", *cfg.delete_title_id);
                 fs::remove_all(fs::path(root_paths.get_pref_path()) / "ux0/app" / *cfg.delete_title_id);
                 fs::remove_all(fs::path(root_paths.get_pref_path()) / "ux0/addcont" / *cfg.delete_title_id);
                 fs::remove_all(fs::path(root_paths.get_pref_path()) / "ux0/user/00/savedata" / *cfg.delete_title_id);
                 fs::remove_all(fs::path(root_paths.get_pref_path()) / "shaderlog" / *cfg.delete_title_id);
             }
-            if (cfg.pkg_path.is_initialized() && cfg.pkg_zrif.is_initialized()) {
+            if (cfg.pkg_path.has_value() && cfg.pkg_zrif.has_value()) {
                 LOG_INFO("Installing pkg from {} ", *cfg.pkg_path);
                 host.pref_path = string_utils::utf_to_wide(root_paths.get_pref_path_string());
                 install_pkg(*cfg.pkg_path, host, *cfg.pkg_zrif, [](float) {});
@@ -114,17 +116,26 @@ int main(int argc, char *argv[]) {
     SDL_Event ev;
     while (SDL_PollEvent(&ev)) {
         if (ev.type == SDL_DROPFILE) {
-            *cfg.vpk_path = ev.drop.file;
+            const auto drop_file = fs::path(string_utils::utf_to_wide(ev.drop.file));
+            if ((drop_file.extension() == ".vpk") || (drop_file.extension() == ".zip"))
+                *cfg.vpk_path = ev.drop.file;
+            else if ((drop_file.extension() == ".rif") || (drop_file.extension() == ".bin"))
+                copy_license(host, drop_file);
+            else
+                LOG_ERROR("File droped: [{}] is not supported.", drop_file.filename().string());
             SDL_free(ev.drop.file);
             break;
         }
     }
 
-    auto inject = create_cpu_dep_inject(host);
-    if (!app::init(host, cfg, root_paths, inject)) {
+    // TODO move this to app_init after module refactoring
+    host.cpu_protocol = std::make_unique<CPUProtocol>(host);
+    if (!app::init(host, cfg, root_paths)) {
         app::error_dialog("Host initialization failed.", host.window.get());
         return HostInitFailed;
     }
+
+    init_libraries(host);
 
     GuiState gui;
     if (!cfg.console)
@@ -191,12 +202,19 @@ int main(int argc, char *argv[]) {
         }
     }
 
+    gui::set_config(gui, host, host.io.app_path);
+
     const auto APP_INDEX = gui::get_app_index(gui, host.io.app_path);
     host.app_version = APP_INDEX->app_ver;
     host.app_category = APP_INDEX->category;
+    host.app_content_id = APP_INDEX->content_id;
     host.current_app_title = APP_INDEX->title;
     host.app_short_title = APP_INDEX->stitle;
     host.io.title_id = APP_INDEX->title_id;
+
+    // Check license for PS App Only
+    if (host.io.title_id.find("PCS") != std::string::npos)
+        host.app_sku_flag = get_license_sku_flag(host, host.app_content_id);
 
     Ptr<const void> entry_point;
     if (const auto err = load_app(entry_point, host, string_utils::utf_to_wide(host.io.app_path)) != Success)
@@ -265,7 +283,7 @@ int main(int argc, char *argv[]) {
         gui::draw_common_dialog(gui, host);
         gui::draw_live_area(gui, host);
 
-        if (host.cfg.performance_overlay && !gui.live_area.app_selector && !gui.live_area.live_area_screen && gui::get_live_area_sys_app_state(gui))
+        if (host.cfg.performance_overlay && !gui.live_area.app_selector && !gui.live_area.live_area_screen && gui::get_sys_apps_state(gui))
             gui::draw_perf_overlay(gui, host);
 
         if (host.display.imgui_render) {

@@ -24,8 +24,8 @@
 struct CPUState;
 struct HostState;
 struct KernelState;
-struct CPUDepInject;
 
+void init_libraries(HostState &host);
 void call_import(HostState &host, CPUState &cpu, uint32_t nid, SceUID thread_id);
 bool load_module(HostState &host, SceSysmoduleModuleId module_id);
 Address resolve_export(KernelState &kernel, uint32_t nid);
@@ -41,11 +41,15 @@ struct VarExport {
 constexpr int var_exports_size =
 #define NID(name, nid)
 #define VAR_NID(name, nid) 1 +
-#include <nids/nids.h>
+#include <nids/nids.inc>
     0;
 #undef VAR_NID
 #undef NID
 
 const std::array<VarExport, var_exports_size> &get_var_exports();
 
-CPUDepInject create_cpu_dep_inject(HostState &host);
+using LibraryInitFn = std::function<void(HostState &host)>;
+
+#define LIBRARY_INIT_DECL(name) void export_library_init_##name(HostState &host);
+#define LIBRARY_INIT_IMPL(name) void export_library_init_##name(HostState &host)
+#define LIBRARY_INIT_REGISTER(name) extern const LibraryInitFn import_library_init_##name = export_library_init_##name;

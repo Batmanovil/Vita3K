@@ -42,7 +42,7 @@
 
 namespace gui {
 
-static void init_style() {
+static void init_style(HostState &host) {
     ImGui::StyleColorsDark();
 
     ImGuiStyle *style = &ImGui::GetStyle();
@@ -58,6 +58,8 @@ static void init_style() {
     style->ScrollbarRounding = 8.0f;
     style->GrabMinSize = 4.0f;
     style->GrabRounding = 2.5f;
+
+    style->ScaleAllSizes(host.dpi_scale);
 
     style->Colors[ImGuiCol_Text] = ImVec4(0.95f, 0.95f, 0.95f, 1.00f);
     style->Colors[ImGuiCol_TextDisabled] = ImVec4(0.24f, 0.23f, 0.29f, 1.00f);
@@ -105,7 +107,18 @@ static void init_style() {
 
 static void init_font(GuiState &gui, HostState &host) {
     ImGuiIO &io = ImGui::GetIO();
+
+#ifdef _WIN32
+    if (host.dpi_scale > 1) {
+        // Set monospaced font path -- ImGui's default is a bitmap font that does not scale well, so load Consolas instead
+        const auto monospaced_font_path = "C:\\Windows\\Fonts\\consola.ttf";
+        gui.monospaced_font = io.Fonts->AddFontFromFileTTF(monospaced_font_path, 13.f * host.dpi_scale, NULL, io.Fonts->GetGlyphRangesJapanese());
+    } else {
+        gui.monospaced_font = io.Fonts->AddFontDefault();
+    }
+#else
     gui.monospaced_font = io.Fonts->AddFontDefault();
+#endif
 
     // Set Large Font
     static const ImWchar large_font_chars[] = { L'0', L'1', L'2', L'3', L'4', L'5', L'6', L'7', L'8', L'9', L':', L'A', L'M', L'P' };
@@ -116,10 +129,12 @@ static void init_font(GuiState &gui, HostState &host) {
 
     // clang-format off
     static const ImWchar latin_range[] = {
+        0x0020, 0x00FF, // Basic Latin + Latin Supplement
         0x0400, 0x052F, // Cyrillic + Cyrillic Supplement
         0x2DE0, 0x2DFF, // Cyrillic Extended-A
         0xA640, 0xA69F, // Cyrillic Extended-B
         0x2000, 0x206F, // General Punctuation
+        0x20A0, 0x20CF, // Currency Symbols
         0x2100, 0x214F, // Letter type symbols
         0,
     };
@@ -151,40 +166,42 @@ static void init_font(GuiState &gui, HostState &host) {
     if (fs::exists(latin_fw_font_path)) {
         // Add fw font to imgui
         gui.fw_font = true;
-        gui.vita_font = io.Fonts->AddFontFromFileTTF(latin_fw_font_path.string().c_str(), 19.2f, &font_config, latin_range);
+        gui.vita_font = io.Fonts->AddFontFromFileTTF(latin_fw_font_path.string().c_str(), 19.2f * host.dpi_scale, &font_config, latin_range);
         font_config.MergeMode = true;
-        io.Fonts->AddFontFromFileTTF((fw_font_path / "jpn0.pvf").string().c_str(), 19.2f, &font_config, io.Fonts->GetGlyphRangesJapanese());
-        io.Fonts->AddFontFromFileTTF((fw_font_path / "jpn0.pvf").string().c_str(), 19.2f, &font_config, extra_range);
+        io.Fonts->AddFontFromFileTTF((fw_font_path / "jpn0.pvf").string().c_str(), 19.2f * host.dpi_scale, &font_config, io.Fonts->GetGlyphRangesJapanese());
+        io.Fonts->AddFontFromFileTTF((fw_font_path / "jpn0.pvf").string().c_str(), 19.2f * host.dpi_scale, &font_config, extra_range);
 
         const auto sys_lang = static_cast<SceSystemParamLang>(host.cfg.sys_lang);
         if (host.cfg.asia_font_support || (sys_lang == SCE_SYSTEM_PARAM_LANG_KOREAN))
-            io.Fonts->AddFontFromFileTTF((fw_font_path / "kr0.pvf").string().c_str(), 19.2f, &font_config, korean_range);
+            io.Fonts->AddFontFromFileTTF((fw_font_path / "kr0.pvf").string().c_str(), 19.2f * host.dpi_scale, &font_config, korean_range);
         if (host.cfg.asia_font_support || (sys_lang == SCE_SYSTEM_PARAM_LANG_CHINESE_T))
-            io.Fonts->AddFontFromFileTTF((fw_font_path / "cn0.pvf").string().c_str(), 19.2f, &font_config, chinese_range);
+            io.Fonts->AddFontFromFileTTF((fw_font_path / "cn0.pvf").string().c_str(), 19.2f * host.dpi_scale, &font_config, chinese_range);
         else if (sys_lang == SCE_SYSTEM_PARAM_LANG_CHINESE_S)
-            io.Fonts->AddFontFromFileTTF((fw_font_path / "cn0.pvf").string().c_str(), 19.2f, &font_config, io.Fonts->GetGlyphRangesChineseSimplifiedCommon());
+            io.Fonts->AddFontFromFileTTF((fw_font_path / "cn0.pvf").string().c_str(), 19.2f * host.dpi_scale, &font_config, io.Fonts->GetGlyphRangesChineseSimplifiedCommon());
 
         io.Fonts->Build();
         font_config.MergeMode = false;
-        gui.large_font = io.Fonts->AddFontFromFileTTF(latin_fw_font_path.string().c_str(), 116.f, &font_config, large_font_chars);
+        gui.large_font = io.Fonts->AddFontFromFileTTF(latin_fw_font_path.string().c_str(), 116.f * host.dpi_scale, &font_config, large_font_chars);
     } else {
         LOG_WARN("Could not find firmware font file at \"{}\", install firmware fonts package to fix this.", latin_fw_font_path.string());
         // Set up default font path
         const auto default_font_path{ fs::path(host.base_path) / "data/fonts/mplus-1mn-bold.ttf" };
         // Check existence of default font file
         if (fs::exists(default_font_path)) {
-            gui.vita_font = io.Fonts->AddFontFromFileTTF(default_font_path.string().c_str(), 22.f, &font_config, latin_range);
+            gui.vita_font = io.Fonts->AddFontFromFileTTF(default_font_path.string().c_str(), 22.f * host.dpi_scale, &font_config, latin_range);
             font_config.MergeMode = true;
-            io.Fonts->AddFontFromFileTTF(default_font_path.string().c_str(), 22.f, &font_config, io.Fonts->GetGlyphRangesJapanese());
+            io.Fonts->AddFontFromFileTTF(default_font_path.string().c_str(), 22.f * host.dpi_scale, &font_config, io.Fonts->GetGlyphRangesJapanese());
 
             io.Fonts->Build();
             font_config.MergeMode = false;
-            gui.large_font = io.Fonts->AddFontFromFileTTF(default_font_path.string().c_str(), 134.f, &font_config, large_font_chars);
+            gui.large_font = io.Fonts->AddFontFromFileTTF(default_font_path.string().c_str(), 134.f * host.dpi_scale, &font_config, large_font_chars);
 
             LOG_INFO("Using default Vita3K font.");
         } else
-            LOG_WARN("Not find default Vita3K, using default imgui font.", default_font_path.string());
+            LOG_WARN("Could not find default Vita3K font, using default ImGui font.", default_font_path.string());
     }
+    // DPI scaling
+    io.DisplayFramebufferScale = { host.dpi_scale, host.dpi_scale };
 }
 
 void init_app_icon(GuiState &gui, HostState &host, const std::string &app_path) {
@@ -394,8 +411,8 @@ static const char *const small_ymonth[] = {
 };
 
 static const char *const wday[] = {
-    "sunday", "monday", "tuesday", "wednesday",
-    "thursday", "friday", "saturday"
+    "Sunday", "Monday", "Tuesday", "Wednesday",
+    "Thursday", "Friday", "Saturday"
 };
 
 std::map<std::string, std::string> get_date_time(GuiState &gui, HostState &host, const tm &date_time) {
@@ -454,7 +471,7 @@ void init(GuiState &gui, HostState &host) {
 
     assert(gui.imgui_state);
 
-    init_style();
+    init_style(host);
     init_font(gui, host);
     init_lang(gui, host);
     get_notice_list(host);
@@ -492,6 +509,9 @@ void draw_end(GuiState &gui, SDL_Window *window) {
 void draw_live_area(GuiState &gui, HostState &host) {
     ImGui::PushFont(gui.vita_font);
 
+    if (gui.live_area.app_close)
+        draw_app_close(gui, host);
+
     if (gui.live_area.app_selector)
         draw_app_selector(gui, host);
 
@@ -511,6 +531,9 @@ void draw_live_area(GuiState &gui, HostState &host) {
 
     if (!gui.trophy_unlock_display_requests.empty())
         gui::draw_trophies_unlocked(gui, host);
+
+    if (host.ime.state && !gui.live_area.app_selector && !gui.live_area.live_area_screen && get_sys_apps_state(gui))
+        draw_ime(host.ime, host);
 
     // System App
     if (gui.live_area.content_manager)
@@ -539,6 +562,8 @@ void draw_ui(GuiState &gui, HostState &host) {
         draw_firmware_install_dialog(gui, host);
     if (gui.file_menu.archive_install_dialog)
         draw_archive_install_dialog(gui, host);
+    if (gui.file_menu.license_install_dialog)
+        draw_license_install_dialog(gui, host);
     if (gui.debug_menu.threads_dialog)
         draw_threads_dialog(gui, host);
     if (gui.debug_menu.thread_details_dialog)
@@ -560,14 +585,14 @@ void draw_ui(GuiState &gui, HostState &host) {
     if (gui.debug_menu.disassembly_dialog)
         draw_disassembly_dialog(gui, host);
 
-    if (gui.configuration_menu.settings_dialog)
+    if (gui.configuration_menu.custom_settings_dialog || gui.configuration_menu.settings_dialog)
         draw_settings_dialog(gui, host);
 
     if (gui.controls_menu.controls_dialog)
         draw_controls_dialog(gui, host);
 
     if (gui.help_menu.about_dialog)
-        draw_about_dialog(gui);
+        draw_about_dialog(gui, host);
     if (gui.help_menu.welcome_dialog)
         draw_welcome_dialog(gui, host);
 

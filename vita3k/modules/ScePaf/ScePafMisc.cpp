@@ -21,9 +21,24 @@ EXPORT(int, scePafGetCurrentClockLocalTime) {
     return UNIMPLEMENTED();
 }
 
+EXPORT(int, scePafSha1Init) {
+    return UNIMPLEMENTED();
+}
+
+EXPORT(int, scePafSha1Result) {
+    return UNIMPLEMENTED();
+}
+
+EXPORT(int, scePafSha1Update) {
+    return UNIMPLEMENTED();
+}
+
 EXPORT(int, sce_paf_misc_does_file_exist) {
     return UNIMPLEMENTED();
 }
 
 BRIDGE_IMPL(scePafGetCurrentClockLocalTime)
+BRIDGE_IMPL(scePafSha1Init)
+BRIDGE_IMPL(scePafSha1Result)
+BRIDGE_IMPL(scePafSha1Update)
 BRIDGE_IMPL(sce_paf_misc_does_file_exist)
