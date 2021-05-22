@@ -22,7 +22,6 @@
 #include <host/state.h>
 #include <io/device.h>
 #include <io/vfs.h>
-#include <kernel/functions.h>
 #include <module/load_module.h>
 #include <nids/functions.h>
 #include <util/arm.h>
@@ -125,7 +124,7 @@ void call_import(HostState &host, CPUState &cpu, uint32_t nid, SceUID thread_id)
 
     if (!export_pc) {
         // HLE - call our C++ function
-        if (host.kernel.watch_import_calls) {
+        if (host.kernel.debugger.watch_import_calls) {
             const std::unordered_set<uint32_t> hle_nid_blacklist = {
                 0xB295EB61, // sceKernelGetTLSAddr
                 0x46E7BE7B, // sceKernelLockLwMutex
@@ -196,11 +195,7 @@ bool load_module(HostState &host, SceSysmoduleModuleId module_id) {
                 LOG_DEBUG("Running module_start of module: {}", module_name);
 
                 Ptr<void> argp = Ptr<void>();
-                const SceUID module_thread_id = create_thread(lib_entry_point, host.kernel, host.mem, module_name, SCE_KERNEL_DEFAULT_PRIORITY_USER,
-                    static_cast<int>(SCE_KERNEL_STACK_SIZE_USER_DEFAULT), nullptr);
-                const ThreadStatePtr module_thread = util::find(module_thread_id, host.kernel.threads);
-                const auto ret = run_on_current(*module_thread, lib_entry_point, 0, argp);
-                delete_thread(host.kernel, *module_thread);
+                const auto ret = host.kernel.run_guest_function(lib_entry_point.address(), { 0, argp.address() });
                 LOG_INFO("Module {} (at \"{}\") module_start returned {}", module_name, module->path, log_hex(ret));
             }
 

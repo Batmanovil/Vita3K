@@ -7,6 +7,8 @@
 
 /*! \brief Base class for all CPU backend implementation */
 struct CPUInterface {
+    virtual ~CPUInterface(){};
+
     virtual int run() = 0;
     virtual void stop() = 0;
 
@@ -36,6 +38,7 @@ struct CPUInterface {
 
     virtual CPUContext save_context() = 0;
     virtual void load_context(CPUContext context) = 0;
+    virtual void invalidate_jit_cache(Address start, size_t length) {}
 
     virtual bool is_thumb_mode() = 0;
     virtual int step() = 0;
@@ -46,4 +49,8 @@ struct CPUInterface {
     virtual void set_log_mem(bool log) = 0;
     virtual bool get_log_code() = 0;
     virtual bool get_log_mem() = 0;
+
+    virtual std::size_t processor_id() const {
+        return 0;
+    }
 };

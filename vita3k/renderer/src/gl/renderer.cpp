@@ -402,7 +402,7 @@ bool create(std::unique_ptr<VertexProgram> &vp, GLState &state, const SceGxmProg
     return true;
 }
 
-void set_context(GLContext &context, GxmContextState &state, const MemState &mem, const GLRenderTarget *rt, const FeatureState &features) {
+void set_context(GLContext &context, const MemState &mem, const GLRenderTarget *rt, const FeatureState &features) {
     R_PROFILE(__func__);
 
     bind_fundamental(context);
@@ -413,8 +413,8 @@ void set_context(GLContext &context, GxmContextState &state, const MemState &mem
         context.render_target = reinterpret_cast<const GLRenderTarget *>(context.current_render_target);
     }
 
-    if (state.fragment_program && state.fragment_program.get(mem)->is_maskupdate) {
-        uint8_t mask = state.writing_mask ? 0xFF : 0;
+    if (context.record.fragment_program && context.record.fragment_program.get(mem)->is_maskupdate) {
+        uint8_t mask = context.record.writing_mask ? 0xFF : 0;
         set_uniform_buffer(context, false, 14, sizeof(mask), &mask, false);
 
         glBindFramebuffer(GL_FRAMEBUFFER, context.render_target->maskbuffer[0]);
@@ -424,22 +424,24 @@ void set_context(GLContext &context, GxmContextState &state, const MemState &mem
 
     glEnable(GL_DEPTH_TEST);
     glDepthMask(GL_TRUE);
-    glClearDepth(state.depth_stencil_surface.backgroundDepth);
+    glClearDepth(context.record.depth_stencil_surface.backgroundDepth);
     glClear(GL_DEPTH_BUFFER_BIT);
     glDisable(GL_DEPTH_TEST);
 
-    sync_mask(context, state, mem);
+    sync_mask(context, mem);
     // TODO: Take request to force load from given memory
 
     // Sync enable/disable depth/stencil based on depth stencil surface.
-    if (sync_depth_data(state)) {
-        sync_front_depth_func(state);
-        sync_front_depth_write_enable(state);
+    if (sync_depth_data(context.record)) {
+        sync_depth_func(context.record.front_depth_func, true);
+        sync_depth_func(context.record.back_depth_func, false);
+        sync_depth_write_enable(context.record.front_depth_write_mode, true);
+        sync_depth_write_enable(context.record.back_depth_write_mode, false);
     }
 
-    if (sync_stencil_data(state, mem)) {
-        sync_stencil_func(state, mem, true);
-        sync_stencil_func(state, mem, false);
+    if (sync_stencil_data(context.record, mem)) {
+        sync_stencil_func(context.record.back_stencil_state, mem, true);
+        sync_stencil_func(context.record.front_stencil_state, mem, false);
     }
 }
 
@@ -473,6 +475,9 @@ void get_surface_data(GLContext &context, size_t width, size_t height, size_t st
         break;
     case SCE_GXM_COLOR_FORMAT_U5U6U5_RGB:
         glReadPixels(0, 0, static_cast<GLsizei>(width), static_cast<GLsizei>(height), GL_RGB, GL_UNSIGNED_SHORT_5_6_5, pixels);
+        break;
+    case SCE_GXM_COLOR_FORMAT_U16_R:
+        glReadPixels(0, 0, static_cast<GLsizei>(width), static_cast<GLsizei>(height), GL_RED, GL_UNSIGNED_SHORT, pixels);
         break;
     case SCE_GXM_COLOR_FORMAT_U8U8_AR:
         glReadPixels(0, 0, static_cast<GLsizei>(width), static_cast<GLsizei>(height), GL_RG, GL_UNSIGNED_BYTE, pixels);

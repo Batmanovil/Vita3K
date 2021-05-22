@@ -25,8 +25,7 @@
 #include <io/device.h>
 #include <io/functions.h>
 #include <io/vfs.h>
-#include <kernel/functions.h>
-#include <kernel/thread/thread_functions.h>
+
 #include <modules/module_parent.h>
 #include <touch/touch.h>
 #include <util/find.h>
@@ -286,6 +285,14 @@ static ExitCode load_app_impl(Ptr<const void> &entry_point, HostState &host, con
     if (path.empty())
         return InvalidApplicationPath;
 
+    const auto call_import = [&host](CPUState &cpu, uint32_t nid, SceUID thread_id) {
+        ::call_import(host, cpu, nid, thread_id);
+    };
+    if (!host.kernel.init(host.mem, call_import, host.kernel.cpu_backend, host.kernel.cpu_opt)) {
+        LOG_WARN("Failed to init kernel!");
+        return KernelInitFailed;
+    }
+
     if (host.cfg.archive_log) {
         const fs::path log_directory{ host.base_path + "/logs" };
         fs::create_directory(log_directory);
@@ -295,6 +302,9 @@ static ExitCode load_app_impl(Ptr<const void> &entry_point, HostState &host, con
         logging::set_level(static_cast<spdlog::level::level_enum>(host.cfg.log_level));
     }
 
+    LOG_INFO("{}: {}", host.cfg[e_cpu_backend], host.cfg.current_config.cpu_backend);
+    LOG_INFO_IF(host.kernel.cpu_backend == CPUBackend::Dynarmic, "CPU Optimisation state: {}", host.cfg.current_config.cpu_opt);
+    LOG_INFO("at9 audio decoder state: {}", !host.cfg.current_config.disable_at9_decoder);
     LOG_INFO("ngs experimental state: {}", !host.cfg.current_config.disable_ngs);
     LOG_INFO("video player state: {}", host.cfg.current_config.video_playing);
     if (host.cfg.current_config.auto_lle)
@@ -364,8 +374,12 @@ static ExitCode load_app_impl(Ptr<const void> &entry_point, HostState &host, con
 
     pre_load_module(host, lib_load_list, VitaIoDevice::vs0);
 
+    // if is Mai Dump, using original eboot
+    const std::string eboot_origin = "mai_moe/eboot_origin.bin";
+    const auto is_mai_dump = fs::exists(fs::path(host.pref_path) / "ux0/app" / host.io.app_path / eboot_origin);
+
     // Load main executable
-    host.self_path = !host.cfg.self_path.empty() ? host.cfg.self_path : EBOOT_PATH;
+    host.self_path = !host.cfg.self_path.empty() ? host.cfg.self_path : (is_mai_dump ? eboot_origin : EBOOT_PATH);
     vfs::FileBuffer eboot_buffer;
     if (vfs::read_app_file(eboot_buffer, host.pref_path, host.io.app_path, host.self_path)) {
         SceUID module_id = load_self(entry_point, host.kernel, host.mem, eboot_buffer.data(), "app0:" + host.self_path, host.cfg);
@@ -397,7 +411,7 @@ bool handle_events(HostState &host, GuiState &gui) {
         ImGui_ImplSdl_ProcessEvent(gui.imgui_state.get(), &event);
         switch (event.type) {
         case SDL_QUIT:
-            stop_all_threads(host.kernel);
+            host.kernel.stop_all_threads();
             host.gxm.display_queue.abort();
             host.display.abort.exchange(true);
             host.display.condvar.notify_all();
@@ -414,15 +428,12 @@ bool handle_events(HostState &host, GuiState &gui) {
                     gui.is_capturing_keys = false;
                 }
             }
-            // toggle gui state
-            if (!host.io.title_id.empty() && !gui.live_area.user_management && !gui.configuration_menu.settings_dialog && !gui.captured_key) {
+            if (!host.io.title_id.empty() && !gui.live_area.user_management && !gui.configuration_menu.custom_settings_dialog && !gui.configuration_menu.settings_dialog && !gui.controls_menu.controls_dialog) {
+                // toggle gui state
                 if (event.key.keysym.sym == SDLK_g)
                     host.display.imgui_render = !host.display.imgui_render;
-            }
-            if (!host.io.title_id.empty() && !gui.live_area.app_selector && gui::get_sys_apps_state(gui)) {
-                // Show/Hide Live Area during app run
-                // TODO pause app running
-                if (event.key.keysym.scancode == host.cfg.keyboard_button_psbutton) {
+                // Show/Hide Live Area during app run, TODO pause app running
+                else if (gui::get_sys_apps_state(gui) && (event.key.keysym.scancode == host.cfg.keyboard_button_psbutton)) {
                     gui::update_apps_list_opened(gui, host, host.io.app_path);
                     gui::init_live_area(gui, host);
                     gui.live_area.information_bar = !gui.live_area.information_bar;
@@ -487,7 +498,7 @@ ExitCode load_app(Ptr<const void> &entry_point, HostState &host, const std::wstr
         host.display.imgui_render = false;
 
     if (host.cfg.gdbstub) {
-        host.kernel.wait_for_debugger = true;
+        host.kernel.debugger.wait_for_debugger = true;
         server_open(host);
     }
 
@@ -516,7 +527,7 @@ ExitCode run_app(HostState &host, Ptr<const void> &entry_point) {
         return ::resolve_nid_name(host.kernel, addr);
     };
 
-    const SceUID main_thread_id = create_thread(entry_point, host.kernel, host.mem, host.io.title_id.c_str(), SCE_KERNEL_DEFAULT_PRIORITY_USER, static_cast<int>(SCE_KERNEL_STACK_SIZE_USER_MAIN), nullptr);
+    const SceUID main_thread_id = ThreadState::create(entry_point, host.kernel, host.mem, host.io.title_id.c_str(), SCE_KERNEL_DEFAULT_PRIORITY_USER, static_cast<int>(SCE_KERNEL_STACK_SIZE_USER_MAIN), nullptr);
 
     if (main_thread_id < 0) {
         app::error_dialog("Failed to init main thread.", host.window.get());
@@ -536,11 +547,10 @@ ExitCode run_app(HostState &host, Ptr<const void> &entry_point) {
 
         LOG_DEBUG("Running module_start of library: {} at address {}", module_name, log_hex(module_start.address()));
 
-        auto argp = Ptr<void>();
-        const SceUID module_thread_id = create_thread(module_start, host.kernel, host.mem, module_name, SCE_KERNEL_DEFAULT_PRIORITY_USER, static_cast<int>(SCE_KERNEL_STACK_SIZE_USER_DEFAULT), nullptr);
-        const ThreadStatePtr module_thread = util::find(module_thread_id, host.kernel.threads);
-        const auto ret = run_on_current(*module_thread, module_start, 0, argp);
-        delete_thread(host.kernel, *module_thread);
+        // TODO: why does fios need separate thread its stack freed anyways?
+        const ThreadStatePtr module_thread = host.kernel.create_thread(host.mem, module_name);
+        const auto ret = module_thread->run_guest_function(module_start.address(), { 0, 0 });
+        module_thread->exit();
 
         LOG_INFO("Module {} (at \"{}\") module_start returned {}", module_name, module->path, log_hex(ret));
     }
@@ -560,7 +570,7 @@ ExitCode run_app(HostState &host, Ptr<const void> &entry_point) {
         param.size = SceSize(buf.size());
         param.attr = arr.address();
     }
-    if (start_thread(host.kernel, main_thread_id, param.size, Ptr<void>(param.attr)) < 0) {
+    if (main_thread->start(host.kernel, param.size, Ptr<void>(param.attr)) < 0) {
         app::error_dialog("Failed to run main thread.", host.window.get());
         return RunThreadFailed;
     }

@@ -18,10 +18,13 @@
 #pragma once
 
 #include <cpu/functions.h>
-#include <kernel/thread/sync_primitives.h>
-#include <kernel/thread/thread_state.h>
+#include <kernel/cpu_protocol.h>
+#include <kernel/debugger.h>
+#include <kernel/sync_primitives.h>
 #include <kernel/types.h>
+#include <mem/allocator.h>
 #include <mem/ptr.h>
+#include <mem/util.h>
 #include <rtc/rtc.h>
 #include <util/pool.h>
 
@@ -35,6 +38,8 @@
 
 struct ThreadState;
 
+struct Breakpoint;
+
 struct SDL_Thread;
 
 struct WatchMemory;
@@ -43,6 +48,9 @@ struct InitialFiber;
 
 struct CodecEngineBlock;
 
+struct ThreadState;
+
+typedef std::shared_ptr<ThreadState> ThreadStatePtr;
 typedef std::shared_ptr<SceKernelMemBlockInfo> SceKernelMemBlockInfoPtr;
 typedef std::map<SceUID, SceKernelMemBlockInfoPtr> Blocks;
 typedef std::map<SceUID, CodecEngineBlock> CodecEngineBlocks;
@@ -55,9 +63,7 @@ typedef std::map<SceUID, SceKernelModuleInfoPtr> SceKernelModuleInfoPtrs;
 typedef std::unordered_map<uint32_t, Address> ExportNids;
 typedef std::map<Address, uint32_t> NidFromExport;
 typedef std::map<Address, uint32_t> NotFoundVars;
-typedef std::map<Address, WatchMemory> WatchMemoryAddrs;
-typedef std::vector<ModuleRegion> ModuleRegions;
-typedef Pool<CPUState> CPUPool;
+typedef std::unique_ptr<CPUProtocol> CPUProtocolPtr;
 
 struct CodecEngineBlock {
     uint32_t size;
@@ -97,9 +103,14 @@ typedef std::map<SceUID, TimerPtr> TimerStates;
 
 using LoadedSysmodules = std::vector<SceSysmoduleModuleId>;
 
-struct WatchMemory {
-    Address start;
-    size_t size;
+struct CorenumAllocator {
+    BitmapAllocator alloc;
+    std::mutex lock;
+
+    void set_max_core_count(const std::size_t max);
+
+    int new_corenum();
+    void free_corenum(const int num);
 };
 
 struct KernelState {
@@ -107,9 +118,11 @@ struct KernelState {
     Blocks blocks;
     Blocks vm_blocks;
     CodecEngineBlocks codec_blocks;
-    Ptr<const void> tls_address;
-    unsigned int tls_psize;
-    unsigned int tls_msize;
+
+    Ptr<const void> tls_address = Ptr<const void>(0);
+    unsigned int tls_psize = 0;
+    unsigned int tls_msize = 0;
+
     SemaphorePtrs semaphores;
     CondvarPtrs condvars;
     CondvarPtrs lwcondvars;
@@ -117,20 +130,20 @@ struct KernelState {
     MutexPtrs lwmutexes; // also Mutexes for now
     EventFlagPtrs eventflags;
     MsgPipePtrs msgpipes;
+
     ThreadStatePtrs threads;
-    ThreadPtrs running_threads;
-    KernelWaitingThreadStates waiting_threads;
+    ThreadStatePtr guest_func_runner;
+
     SceKernelModuleInfoPtrs loaded_modules;
     LoadedSysmodules loaded_sysmodules;
     ExportNids export_nids;
     NidFromExport nid_from_export;
-    NotFoundVars not_found_vars;
-    WatchMemoryAddrs watch_memory_addrs;
-    ModuleRegions module_regions;
-    ExclusiveMonitorPtr exclusive_monitor;
-    CPUPool cpu_pool;
+
+    bool cpu_opt;
     CPUBackend cpu_backend;
-    CPUProtocolBase *cpu_protocol;
+    CorenumAllocator corenum_allocator;
+    CPUProtocolPtr cpu_protocol;
+    ExclusiveMonitorPtr exclusive_monitor;
 
     ObjectStore obj_store;
 
@@ -139,14 +152,23 @@ struct KernelState {
     TimerStates timers;
     Ptr<uint32_t> process_param;
 
-    bool wait_for_debugger = false;
-    bool watch_import_calls = false;
-    bool watch_code = false;
-    bool watch_memory = false;
+    NotFoundVars not_found_vars;
+    ModuleRegions module_regions;
+
+    Debugger debugger;
 
     SceUID get_next_uid() {
         return next_uid++;
     }
+
+    bool init(MemState &mem, CallImportFunc call_import, CPUBackend cpu_backend, bool cpu_opt);
+    void set_memory_watch(bool enabled);
+    void invalidate_jit_cache(Address start, size_t length);
+    ThreadStatePtr get_thread(SceUID thread_id);
+    Ptr<Ptr<void>> get_thread_tls_addr(MemState &mem, SceUID thread_id, int key);
+    void stop_all_threads();
+    ThreadStatePtr create_thread(MemState &mem, const char *name);
+    int run_guest_function(Address callback_address, const std::vector<uint32_t> &args);
 
 private:
     std::atomic<SceUID> next_uid{ 0 };

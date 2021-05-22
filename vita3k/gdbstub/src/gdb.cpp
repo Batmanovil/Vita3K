@@ -23,7 +23,6 @@
 #include <gdbstub/functions.h>
 
 #include <cpu/functions.h>
-#include <kernel/functions.h>
 
 #include <mem/state.h>
 #include <spdlog/fmt/bundled/printf.h>
@@ -441,63 +440,64 @@ static std::string cmd_continue(HostState &state, PacketCommand &command) {
             if (state.gdb.inferior_thread != 0) {
                 const auto guard = std::lock_guard(state.kernel.mutex);
                 auto thread = state.kernel.threads[state.gdb.inferior_thread];
-                thread->to_do = step ? ThreadToDo::step : ThreadToDo::run;
-                thread->something_to_do.notify_one();
+                auto thread_lock = std::unique_lock(thread->mutex);
+                thread->resume(step);
+                if (step) {
+                    // Wait until it finish stepping
+                    // TODO if that thread waits for sync primitive, dead lock.
+                    thread->status_cond.wait(thread_lock, [&]() { return thread->status == ThreadStatus::suspend; });
+                }
             }
 
             if (!step) {
                 // resume the worlld
                 {
-                    const auto guard = std::lock_guard(state.kernel.mutex);
-                    for (const auto [id, thread] : state.kernel.threads) {
-                        if (thread->to_do == ThreadToDo::wait && hit_breakpoint(*thread->cpu)) {
-                            thread->to_do = ThreadToDo::run;
-                            thread->something_to_do.notify_one();
+                    auto lock = std::unique_lock(state.kernel.mutex);
+                    for (const auto pair : state.kernel.threads) {
+                        auto &thread = pair.second;
+                        auto thread_lock = std::unique_lock(thread->mutex);
+                        lock.unlock();
+                        if (thread && thread->status == ThreadStatus::suspend) {
+                            thread->resume();
+                            thread->status_cond.wait(thread_lock, [&]() { return thread->status != ThreadStatus::suspend; });
                         }
+                        lock.lock();
                     }
                 }
                 // wait until some thread triger breakpoint
                 bool did_break = false;
                 while (!did_break) {
-                    auto guard = std::unique_lock(state.kernel.mutex);
+                    auto lock = std::unique_lock(state.kernel.mutex);
 
                     if (state.gdb.server_die)
                         return "";
                     for (const auto [id, thread] : state.kernel.threads) {
-                        if (thread->to_do == ThreadToDo::wait && hit_breakpoint(*thread->cpu)) {
+                        const auto thread_guard = std::lock_guard(thread->mutex);
+                        if (thread->status == ThreadStatus::suspend && hit_breakpoint(*thread->cpu)) {
                             state.gdb.inferior_thread = id;
                             did_break = true;
                             break;
                         }
                     }
 
-                    guard.unlock();
+                    lock.unlock();
 
                     std::this_thread::sleep_for(std::chrono::milliseconds(watch_delay));
                 }
 
                 // stop the world
                 {
-                    const auto guard = std::lock_guard(state.kernel.mutex);
-                    for (const auto &thread : state.kernel.threads) {
-                        if (thread.second->to_do == ThreadToDo::run) {
-                            trigger_breakpoint(*thread.second->cpu);
+                    auto lock = std::unique_lock(state.kernel.mutex);
+                    for (const auto pair : state.kernel.threads) {
+                        auto thread = pair.second;
+                        auto thread_lock = std::unique_lock(thread->mutex);
+                        lock.unlock();
+                        if (thread->status == ThreadStatus::run) {
+                            thread->suspend();
+                            thread->status_cond.wait(thread_lock, [=]() { return thread->status == ThreadStatus::suspend || thread->status == ThreadStatus::dormant; });
                         }
+                        lock.lock();
                     }
-                }
-            } else {
-                // wait until stepping finish
-                // TODO use cond_variable
-                while (true) {
-                    auto guard = std::unique_lock(state.kernel.mutex);
-
-                    if (state.kernel.threads[state.gdb.inferior_thread]->to_do == ThreadToDo::wait) {
-                        break;
-                    }
-
-                    guard.unlock();
-
-                    std::this_thread::sleep_for(std::chrono::microseconds(100));
                 }
             }
 
@@ -589,7 +589,7 @@ static std::string cmd_add_breakpoint(HostState &state, PacketCommand &command) 
 
     // kind is 2 if it's thumb mode
     // https://sourceware.org/gdb/current/onlinedocs/gdb/ARM-Breakpoint-Kinds.html#ARM-Breakpoint-Kinds
-    add_breakpoint(state.mem, true, kind == 2, address, nullptr);
+    state.kernel.debugger.add_breakpoint(state.mem, address, kind == 2);
 
     return "OK";
 }
@@ -604,7 +604,7 @@ static std::string cmd_remove_breakpoint(HostState &state, PacketCommand &comman
     const uint32_t kind = static_cast<uint32_t>(std::stol(content.substr(second + 1, content.size() - second - 1)));
 
     LOG_GDB("GDB Server Removed Breakpoint at {} ({}, {}).", log_hex(address), type, kind);
-    remove_breakpoint(state.mem, address);
+    state.kernel.debugger.remove_breakpoint(state.mem, address);
 
     return "OK";
 }
@@ -761,12 +761,6 @@ static void server_listen(HostState &state) {
         return;
     }
 
-    {
-        const auto guard = std::lock_guard(state.kernel.mutex);
-        for (const auto &thread : state.kernel.threads) {
-            trigger_breakpoint(*thread.second->cpu);
-        }
-    }
     LOG_INFO("GDB Server Received Connection");
 
     int64_t status;

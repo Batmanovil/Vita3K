@@ -50,6 +50,7 @@
     code(float, "background-alpha", .300f, background_alpha)                                            \
     code(int, "log-level", static_cast<int>(spdlog::level::trace), log_level)                           \
     code(std::string, "cpu-backend", "Unicorn", cpu_backend)                                            \
+    code(bool, "cpu-opt", true, cpu_opt)                                                                \
     code(std::string, "pref-path", std::string{}, pref_path)                                            \
     code(std::string, "last-app", std::string{}, last_app)                                              \
     code(bool, "discord-rich-presence", true, discord_rich_presence)                                    \
@@ -89,7 +90,8 @@
     code(bool, "asia-font-support", false, asia_font_support)                                           \
     code(bool, "video-playing", true, video_playing)                                                    \
     code(bool, "spirv-shader", false, spirv_shader)                                                     \
-    code(uint64_t, "current-ime-lang", 4, current_ime_lang)
+    code(uint64_t, "current-ime-lang", 4, current_ime_lang)                                             \
+    code(bool, "disable-at9-decoder", false, disable_at9_decoder)
 
 // Vector members produced in the config file
 // Order is code(option_type, option_name, default_value)

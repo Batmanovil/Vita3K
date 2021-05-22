@@ -17,7 +17,6 @@
 
 #include "interface.h"
 
-#include "cpu_protocol.h"
 #include <app/functions.h>
 #include <app/screen_render.h>
 #include <config/functions.h>
@@ -128,8 +127,6 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    // TODO move this to app_init after module refactoring
-    host.cpu_protocol = std::make_unique<CPUProtocol>(host);
     if (!app::init(host, cfg, root_paths)) {
         app::error_dialog("Host initialization failed.", host.window.get());
         return HostInitFailed;
@@ -225,8 +222,8 @@ int main(int argc, char *argv[]) {
     if (cfg.console) {
         auto main_thread = host.kernel.threads.at(host.main_thread_id);
         auto lock = std::unique_lock<std::mutex>(main_thread->mutex);
-        main_thread->something_to_do.wait(lock, [&]() {
-            return main_thread->to_do == ThreadToDo::exit;
+        main_thread->status_cond.wait(lock, [&]() {
+            return main_thread->status == ThreadStatus::dormant;
         });
         return Success;
     } else {

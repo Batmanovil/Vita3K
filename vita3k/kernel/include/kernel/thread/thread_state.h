@@ -17,44 +17,107 @@
 
 #pragma once
 
+#include <condition_variable>
+#include <cpu/state.h>
+#include <kernel/types.h>
+#include <list>
 #include <mem/block.h>
 #include <mem/ptr.h>
-#include <util/semaphore.h>
-
-#include <condition_variable>
 #include <mutex>
+#include <optional>
 #include <string>
 
 struct CPUState;
 struct CPUContext;
 
-typedef std::unique_ptr<CPUState, std::function<void(CPUState *)>> CPUStatePtr;
+struct ThreadState;
+struct ThreadParams;
+struct KernelState;
 
-enum class ThreadToDo {
-    exit_delete,
-    exit,
-    run,
-    step,
-    wait,
+typedef std::unique_ptr<CPUState, std::function<void(CPUState *)>> CPUStatePtr;
+typedef std::function<void(CPUState &, uint32_t, SceUID)> CallImport;
+typedef std::function<std::string(Address)> ResolveNIDName;
+
+struct ThreadJob {
+    CPUContext ctx;
+    std::function<void(int res)> notify;
+    bool in_progress = false;
+};
+
+typedef std::list<ThreadJob> RunQueue;
+
+enum class ThreadStatus {
+    run, // Running
+    dormant, // Waiting for a job
+    suspend, // Suspended by debugger
+    wait, // Waiting to be awaken by sync object or operation
 };
 
 constexpr auto kernel_tls_size = 0x800;
 
-struct ThreadState {
-    Block stack;
-    int priority;
-    int stack_size;
-    CPUStatePtr cpu;
-    ThreadToDo to_do = ThreadToDo::run;
+struct ThreadSignal {
+    ThreadSignal() = default;
+    ~ThreadSignal() = default;
+
+    void wait();
+    bool send();
+
+private:
     std::mutex mutex;
-    sync_utils::Semaphore signal;
-    std::condition_variable something_to_do;
-    std::vector<std::shared_ptr<ThreadState>> waiting_threads;
+    std::condition_variable recv_cond;
+    bool signaled = false;
+};
+
+// Internal
+enum class ThreadToDo {
+    exit,
+    run,
+    step,
+    suspend,
+    wait,
+};
+
+struct ThreadState {
+    std::mutex mutex;
     std::string name;
     SceUID id;
     Address entry_point;
-    int returned_value;
+    Block stack;
+    int stack_size;
     Block tls;
+    int priority;
+
+    CPUStatePtr cpu;
+    ThreadStatus status = ThreadStatus::dormant;
+    RunQueue run_queue;
+
+    ThreadSignal signal;
+    std::condition_variable status_cond;
+    std::vector<std::shared_ptr<ThreadState>> waiting_threads;
+    int returned_value;
+
+    static SceUID create(Ptr<const void> entry_point, KernelState &kernel, MemState &mem, const char *name, int init_priority, int stack_size, const SceKernelThreadOptParam *option);
+    int start(KernelState &kernel, SceSize arglen, const Ptr<void> &argp);
+    void update_status(ThreadStatus status, std::optional<ThreadStatus> expected = std::nullopt);
+    bool run_loop();
+    void flush_callback_requests();
+    void halt();
+    void exit();
+    void raise_waiting_threads();
+    Ptr<void> copy_block_to_stack(MemState &mem, const Ptr<void> &data, const int size);
+    int run_guest_function(Address callback_address, const std::vector<uint32_t> &args);
+    void request_callback(Address callback_address, const std::vector<uint32_t> &args, const std::function<void(int res)> notify = nullptr);
+
+    void suspend();
+    void resume(bool step = false);
+
+private:
+    void clear_run_queue();
+
+    CPUContext init_cpu_ctx;
+    RunQueue jobs_to_add;
+    ThreadToDo to_do = ThreadToDo::wait;
+    std::condition_variable something_to_do;
 };
 
 typedef std::shared_ptr<ThreadState> ThreadStatePtr;

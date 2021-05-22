@@ -12,6 +12,14 @@
 struct FeatureState;
 
 namespace renderer {
+Command *generic_command_allocate() {
+    return new Command;
+}
+
+void generic_command_free(Command *cmd) {
+    delete cmd;
+}
+
 void complete_command(State &state, CommandHelper &helper, const int code) {
     helper.complete(code);
     state.command_finish_one.notify_all();
@@ -20,7 +28,7 @@ void complete_command(State &state, CommandHelper &helper, const int code) {
 void process_batch(renderer::State &state, const FeatureState &features, MemState &mem, Config &config, CommandList &command_list, const char *base_path,
     const char *title_id) {
     using CommandHandlerFunc = std::function<void(renderer::State &, MemState &, Config &,
-        CommandHelper &, const FeatureState &, Context *, GxmContextState *, const char *, const char *)>;
+        CommandHelper &, const FeatureState &, Context *, const char *, const char *)>;
 
     static std::map<CommandOpcode, CommandHandlerFunc> handlers = {
         { CommandOpcode::SetContext, cmd_handle_set_context },
@@ -31,6 +39,7 @@ void process_batch(renderer::State &state, const FeatureState &features, MemStat
         { CommandOpcode::Nop, cmd_handle_nop },
         { CommandOpcode::SetState, cmd_handle_set_state },
         { CommandOpcode::SignalSyncObject, cmd_handle_signal_sync_object },
+        { CommandOpcode::SignalNotification, cmd_handle_notification },
         { CommandOpcode::DestroyRenderTarget, cmd_handle_destroy_render_target }
     };
 
@@ -47,14 +56,17 @@ void process_batch(renderer::State &state, const FeatureState &features, MemStat
             LOG_ERROR("Unimplemented command opcode {}", static_cast<int>(cmd->opcode));
         } else {
             CommandHelper helper(cmd);
-            handler->second(state, mem, config, helper, features, command_list.context,
-                command_list.gxm_context, base_path, title_id);
+            handler->second(state, mem, config, helper, features, command_list.context, base_path, title_id);
         }
 
         Command *last_cmd = cmd;
         cmd = cmd->next;
 
-        delete last_cmd;
+        if (command_list.context) {
+            command_list.context->free_func(last_cmd);
+        } else {
+            generic_command_free(last_cmd);
+        }
     } while (true);
 }
 

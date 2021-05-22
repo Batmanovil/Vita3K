@@ -28,9 +28,8 @@
 #include <host/functions.h>
 #include <host/load_self.h>
 #include <io/functions.h>
-#include <kernel/functions.h>
-#include <kernel/thread/sync_primitives.h>
-#include <kernel/thread/thread_functions.h>
+#include <kernel/sync_primitives.h>
+
 #include <kernel/types.h>
 #include <rtc/rtc.h>
 #include <util/lock_and_find.h>
@@ -998,7 +997,7 @@ EXPORT(int, sceKernelDeleteLwMutex, Ptr<SceKernelLwMutexWork> workarea) {
 
 EXPORT(int, sceKernelExitProcess, int res) {
     // TODO Handle exit code?
-    stop_all_threads(host.kernel);
+    host.kernel.stop_all_threads();
 
     return SCE_KERNEL_OK;
 }
@@ -1111,7 +1110,7 @@ EXPORT(int, sceKernelGetSystemTime) {
 }
 
 EXPORT(Ptr<Ptr<void>>, sceKernelGetTLSAddr, int key) {
-    return get_thread_tls_addr(host.kernel, host.mem, thread_id, key);
+    return host.kernel.get_thread_tls_addr(host.mem, thread_id, key);
 }
 
 EXPORT(int, sceKernelGetThreadContextForVM) {
@@ -1136,7 +1135,7 @@ EXPORT(int, sceKernelGetThreadExitStatus, SceUID thid, SceInt32 *pExitStatus) {
     if (!thread) {
         return SCE_KERNEL_ERROR_UNKNOWN_THREAD_ID;
     }
-    if (thread->to_do != ThreadToDo::exit) {
+    if (thread->status != ThreadStatus::dormant) {
         return SCE_KERNEL_ERROR_NOT_DORMANT;
     }
     if (pExitStatus) {
@@ -1556,8 +1555,8 @@ EXPORT(int, sceKernelWaitSemaCB, SceUID semaid, int signal, SceUInt *timeout) {
     return CALL_EXPORT(_sceKernelWaitSema, semaid, signal, timeout);
 }
 
-EXPORT(int, sceKernelWaitSignal, uint32_t unknown, uint32_t delay, uint32_t timeout, SceKernelWaitSignalParams *params) {
-    return CALL_EXPORT(_sceKernelWaitSignal, unknown, delay, timeout, params);
+EXPORT(int, sceKernelWaitSignal, uint32_t unknown, uint32_t delay, uint32_t timeout) {
+    return CALL_EXPORT(_sceKernelWaitSignal, unknown, delay, timeout);
 }
 
 EXPORT(int, sceKernelWaitSignalCB) {

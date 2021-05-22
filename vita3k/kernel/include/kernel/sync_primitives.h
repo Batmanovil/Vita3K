@@ -46,6 +46,10 @@ struct WaitingThreadData {
         };
     };
 
+    bool operator<(const WaitingThreadData &rhs) const {
+        return priority < rhs.priority;
+    }
+
     bool operator>(const WaitingThreadData &rhs) const {
         return priority > rhs.priority;
     }
@@ -143,12 +147,6 @@ struct MsgPipe : SyncPrimitive {
 
 typedef std::shared_ptr<MsgPipe> MsgPipePtr;
 typedef std::map<SceUID, MsgPipePtr> MsgPipePtrs;
-
-struct WaitingThreadState {
-    std::string name; // for debugging
-};
-
-typedef std::map<SceUID, WaitingThreadState> KernelWaitingThreadStates;
 
 enum class SyncWeight {
     Light, // lightweight

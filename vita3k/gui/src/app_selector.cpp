@@ -23,8 +23,6 @@
 
 #include <io/VitaIoDevice.h>
 
-#include <kernel/functions.h>
-
 #include <util/log.h>
 #include <util/string_utils.h>
 
@@ -179,7 +177,7 @@ void draw_app_close(GuiState &gui, HostState &host) {
             host.cfg.last_app = app_path;
             config::serialize_config(host.cfg, host.cfg.config_path);
         }
-        stop_all_threads(host.kernel);
+        host.kernel.stop_all_threads();
         host.load_app_path = app_path;
         host.load_exec = true;
     }
@@ -264,7 +262,7 @@ void draw_app_selector(GuiState &gui, HostState &host) {
     if (!host.display.imgui_render || ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows))
         gui.live_area.information_bar = true;
 
-    if (!gui.file_menu.archive_install_dialog && !gui.file_menu.firmware_install_dialog && !gui.file_menu.pkg_install_dialog) {
+    if (!gui.file_menu.archive_install_dialog && !gui.file_menu.firmware_install_dialog && !gui.file_menu.pkg_install_dialog && !gui.configuration_menu.custom_settings_dialog && !gui.configuration_menu.settings_dialog && !gui.controls_menu.controls_dialog) {
         if (ImGui::IsWindowHovered(ImGuiHoveredFlags_AnyWindow) || ImGui::IsAnyItemActive() || ImGui::IsAnyItemHovered())
             last_time["start"] = 0;
         else {
@@ -504,7 +502,7 @@ void draw_app_selector(GuiState &gui, HostState &host) {
             refresh_app_list(gui, host);
         ImGui::PopStyleColor(3);
         ImGui::SameLine();
-        ImGui::TextColored(GUI_COLOR_TEXT, "Search");
+        ImGui::TextColored(GUI_COLOR_TEXT_BLACK, "Search");
         ImGui::SameLine();
         gui.app_search_bar.Draw("##app_search_bar", (120.f * SCALE.x));
         if (!host.cfg.apps_list_grid) {
@@ -562,14 +560,21 @@ void draw_app_selector(GuiState &gui, HostState &host) {
                 ImGui::SetCursorPosY(POS_ICON);
                 if (host.cfg.apps_list_grid)
                     ImGui::SetCursorPosX(GRID_INIT_POS - (GRID_ICON_SIZE.x / 2.f));
-                else
-                    ImGui::SetCursorPosY(POS_ICON);
                 ImGui::PushID(app.path.c_str());
                 ImGui::Selectable("##icon", &selected, host.cfg.apps_list_grid ? ImGuiSelectableFlags_None : ImGuiSelectableFlags_SpanAllColumns, host.cfg.apps_list_grid ? GRID_ICON_SIZE : ImVec2(0.f, icon_size));
                 if (!gui.configuration_menu.custom_settings_dialog && ImGui::IsItemHovered())
                     host.app_path = app.path;
                 if (host.app_path == app.path)
                     draw_app_context_menu(gui, host, app.path);
+                const auto IS_CUSTOM_CONFIG = fs::exists(fs::path(host.base_path) / "config" / fmt::format("config_{}.xml", app.path));
+                if (IS_CUSTOM_CONFIG) {
+                    if (host.cfg.apps_list_grid)
+                        ImGui::SetCursorPosX(GRID_INIT_POS - (GRID_ICON_SIZE.x / 2.f));
+                    ImGui::SetCursorPosY(ImGui::GetCursorPosY() - (ImGui::GetFontSize() + 26.f));
+                    ImGui::PushStyleColor(ImGuiCol_Text, GUI_COLOR_TEXT_TITLE);
+                    ImGui::Button("CC", ImVec2(40.f * SCALE.x, 0.f));
+                    ImGui::PopStyleColor();
+                }
                 ImGui::PopID();
                 if (!host.cfg.apps_list_grid) {
                     ImGui::NextColumn();
@@ -611,7 +616,7 @@ void draw_app_selector(GuiState &gui, HostState &host) {
 
     if (current_scroll_pos > 0) {
         const auto ARROW_UPP_CENTER = ImVec2(display_size.x - (30.f * SCALE.x), 110.f * SCALE.y);
-        ImGui::GetForegroundDrawList()->AddTriangleFilled(
+        ImGui::GetWindowDrawList()->AddTriangleFilled(
             ImVec2(ARROW_UPP_CENTER.x - (20.f * SCALE.x), ARROW_UPP_CENTER.y + (16.f * SCALE.y)),
             ImVec2(ARROW_UPP_CENTER.x, ARROW_UPP_CENTER.y - (16.f * SCALE.y)),
             ImVec2(ARROW_UPP_CENTER.x + (20.f * SCALE.x), ARROW_UPP_CENTER.y + (16.f * SCALE.y)), ARROW_COLOR);
@@ -622,7 +627,7 @@ void draw_app_selector(GuiState &gui, HostState &host) {
     }
     if (!gui.apps_list_opened.empty()) {
         const auto ARROW_CENTER = ImVec2(display_size.x - (30.f * SCALE.x), display_size.y - (250.f * SCALE.y));
-        ImGui::GetForegroundDrawList()->AddTriangleFilled(
+        ImGui::GetWindowDrawList()->AddTriangleFilled(
             ImVec2(ARROW_CENTER.x - (16.f * SCALE.x), ARROW_CENTER.y - (20.f * SCALE.y)),
             ImVec2(ARROW_CENTER.x + (16.f * SCALE.x), ARROW_CENTER.y),
             ImVec2(ARROW_CENTER.x - (16.f * SCALE.x), ARROW_CENTER.y + (20.f * SCALE.y)), ARROW_COLOR);

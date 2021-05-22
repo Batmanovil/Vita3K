@@ -10,6 +10,7 @@
 #include <memory>
 
 class ArmDynarmicCallback;
+class ArmDynarmicCP15;
 
 class DynarmicCPU : public CPUInterface {
     friend class ArmDynarmicCallback;
@@ -19,9 +20,12 @@ class DynarmicCPU : public CPUInterface {
 
     std::unique_ptr<Dynarmic::A32::Jit> jit;
     std::unique_ptr<ArmDynarmicCallback> cb;
+    std::shared_ptr<ArmDynarmicCP15> cp15;
 
     Address ep;
     Address tpidruro;
+
+    std::size_t core_id = 0;
 
     bool exit_request = false;
     bool halted = false;
@@ -31,8 +35,10 @@ class DynarmicCPU : public CPUInterface {
     bool log_read = false;
     bool log_write = false;
 
+    std::unique_ptr<Dynarmic::A32::Jit> make_jit(Dynarmic::ExclusiveMonitor *monitor, bool cpu_opt);
+
 public:
-    DynarmicCPU(CPUState *state, Address pc, Address sp, Dynarmic::ExclusiveMonitor *monitor);
+    DynarmicCPU(CPUState *state, std::size_t processor_id, Address pc, Address sp, Dynarmic::ExclusiveMonitor *monitor, bool cpu_opt);
     ~DynarmicCPU();
     int run() override;
     void stop() override;
@@ -73,4 +79,7 @@ public:
     void set_log_mem(bool log) override;
     bool get_log_code() override;
     bool get_log_mem() override;
+
+    std::size_t processor_id() const override;
+    void invalidate_jit_cache(Address start, size_t length) override;
 };

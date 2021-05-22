@@ -763,48 +763,36 @@ static SpirvShaderParameters create_parameters(spv::Builder &b, const SceGxmProg
     using literal_pair = std::pair<std::uint32_t, spv::Id>;
 
     std::vector<literal_pair> literal_pairs;
-    std::map<int, spv::Id> uniform_buffers;
 
     const auto program_input = shader::get_program_input(program);
 
     int total_buffer_size = 0;
-    std::map<int, int> buffer_sizes;
+    int last_base = 0;
     std::map<int, int> buffer_bases;
 
     for (const auto &buffer : program_input.uniform_buffers) {
         const auto buffer_size = (buffer.size + 3) / 4;
         total_buffer_size += buffer_size;
-        buffer_sizes.emplace(buffer.index, buffer_size);
+
         spv::Id block = create_uniform_block(b, features, buffer.index, buffer_size, !program.is_fragment());
-        uniform_buffers.emplace(buffer.index, block);
+
+        SpirvUniformBufferInfo buffer_info;
+        buffer_info.base = last_base;
+        buffer_info.size = buffer_size * 16;
+        buffer_info.var = block;
+
+        buffer_bases.emplace(buffer.index, last_base);
+        spv_params.buffers.emplace(buffer.index, buffer_info);
+
+        last_base += buffer_size * 16;
     }
 
     for (const auto &buffer : program_input.uniform_buffers) {
         if (buffer.reg_block_size > 0) {
             const uint32_t reg_block_size_in_f32v = (buffer.reg_block_size + 3) / 4;
-            const auto spv_buffer = uniform_buffers.at(buffer.index);
+            const auto spv_buffer = spv_params.buffers.at(buffer.index).var;
             copy_uniform_block_to_register(b, spv_params.uniforms, spv_buffer, ite_copy, buffer.reg_start_offset / 4, reg_block_size_in_f32v);
         }
-    }
-
-    spv::Id memory_type = b.makeArrayType(f32_type, b.makeIntConstant(total_buffer_size * 4 + 1), 0);
-    spv_params.memory = b.createVariable(spv::StorageClassPrivate, memory_type, "memory");
-
-    int last_base = 0;
-    for (const auto [index, size] : buffer_sizes) {
-        const auto buffer = uniform_buffers.at(index);
-        utils::make_for_loop(b, ite_copy, b.makeIntConstant(0), b.makeIntConstant(size), [&]() {
-            spv::Id to_copy = b.createAccessChain(spv::StorageClassUniform, buffer, { b.makeIntConstant(0), b.createLoad(ite_copy) });
-            spv::Id offset_base = b.createBinOp(spv::OpIMul, i32_type, b.makeIntConstant(4), b.createLoad(ite_copy));
-            for (int i = 0; i < 4; ++i) {
-                spv::Id offset = b.createBinOp(spv::OpIAdd, i32_type, offset_base, b.makeIntConstant(i));
-                spv::Id src = b.createBinOp(spv::OpVectorExtractDynamic, f32_type, b.createLoad(to_copy), b.makeIntConstant(i));
-                spv::Id dest = b.createAccessChain(spv::StorageClassPrivate, spv_params.memory, { b.createBinOp(spv::OpIAdd, i32_type, offset, b.makeIntConstant(last_base)) });
-                b.createStore(src, dest);
-            }
-        });
-        buffer_bases.emplace(index, last_base * 4);
-        last_base += size * 4;
     }
 
     const auto add_var_to_reg = [&](const Input &input, const std::string &name, std::uint16_t semantic, bool pa, std::int32_t location) {
@@ -1395,7 +1383,7 @@ static SpirvCode convert_gxp_to_spirv_impl(const SceGxmProgram &program, const s
     return spirv;
 }
 
-static std::string convert_spirv_to_glsl(const std::string &shader_name, SpirvCode spirv_binary, const FeatureState &features, TranslationState &translation_state) {
+static std::string convert_spirv_to_glsl(const std::string &shader_name, SpirvCode spirv_binary, const FeatureState &features, TranslationState &translation_state, bool is_native_color) {
     spirv_cross::CompilerGLSL glsl(std::move(spirv_binary));
 
     spirv_cross::CompilerGLSL::Options options;
@@ -1530,7 +1518,7 @@ static std::string convert_spirv_to_glsl(const std::string &shader_name, SpirvCo
         glsl.set_name(translation_state.frag_coord_id, "gl_FragCoord");
     }
     if (features.support_shader_interlock) {
-        if (translation_state.is_fragment) {
+        if (translation_state.is_fragment && is_native_color) {
             glsl.add_header_line("layout(early_fragment_tests) in;\n");
         }
         glsl.require_extension("GL_ARB_fragment_shader_interlock");
@@ -1572,7 +1560,7 @@ std::string convert_gxp_to_glsl(const SceGxmProgram &program, const std::string 
     translation_state.is_maskupdate = maskupdate;
     std::vector<uint32_t> spirv_binary = convert_gxp_to_spirv_impl(program, shader_name, features, translation_state, hint_attributes, force_shader_debug, dumper);
 
-    const auto source = convert_spirv_to_glsl(shader_name, spirv_binary, features, translation_state);
+    const auto source = convert_spirv_to_glsl(shader_name, spirv_binary, features, translation_state, program.is_native_color());
 
     if (LOG_SHADER_CODE || force_shader_debug) {
         LOG_DEBUG("Generated GLSL:\n{}", source);

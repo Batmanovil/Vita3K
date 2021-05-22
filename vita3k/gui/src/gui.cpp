@@ -388,6 +388,7 @@ void get_sys_apps_title(GuiState &gui, HostState &host) {
         } else {
             host.app_version = "1.00";
             host.app_category = "gda";
+            host.app_title_id = app;
             if (app == "NPXS10008") {
                 host.app_short_title = "Trophies";
                 host.app_title = "Trophy Collection";
@@ -483,7 +484,6 @@ void init(GuiState &gui, HostState &host) {
     if (host.cfg.show_welcome)
         gui.help_menu.welcome_dialog = true;
 
-    get_modules_list(gui, host);
     get_sys_apps_title(gui, host);
 
     init_home(gui, host);
@@ -491,7 +491,7 @@ void init(GuiState &gui, HostState &host) {
     // Initialize trophy callback
     host.np.trophy_state.trophy_unlock_callback = [&gui](NpTrophyUnlockCallbackData &callback_data) {
         const std::lock_guard<std::mutex> guard(gui.trophy_unlock_display_requests_access_mutex);
-        gui.trophy_unlock_display_requests.push(std::move(callback_data));
+        gui.trophy_unlock_display_requests.insert(gui.trophy_unlock_display_requests.begin(), callback_data);
     };
 }
 

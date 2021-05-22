@@ -15,36 +15,87 @@
 // with this program; if not, write to the Free Software Foundation, Inc.,
 // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
-#include <kernel/functions.h>
 #include <kernel/state.h>
-#include <kernel/thread/thread_functions.h>
+
 #include <kernel/thread/thread_state.h>
 
 #include <cpu/functions.h>
 #include <mem/ptr.h>
+#include <util/align.h>
+#include <util/arm.h>
 #include <util/find.h>
 #include <util/log.h>
 
 #include <spdlog/fmt/fmt.h>
+#include <util/lock_and_find.h>
 
-bool init(KernelState &kernel, MemState &mem, int cpu_pool_size, CPUProtocolBase *cpu_protocol, CPUBackend cpu_backend) {
-    for (int i = 0; i < cpu_pool_size; ++i) {
-        auto item = init_cpu(cpu_backend, 0, 0, 0, mem, cpu_protocol);
-        kernel.cpu_pool.add(std::move(item));
-    }
+int CorenumAllocator::new_corenum() {
+    const std::lock_guard<std::mutex> guard(lock);
 
-    kernel.exclusive_monitor = new_exclusive_monitor(100);
-    kernel.start_tick = { rtc_base_ticks() };
-    kernel.base_tick = { rtc_base_ticks() };
-    kernel.cpu_protocol = cpu_protocol;
+    int size = 1;
+    return alloc.allocate_from(0, size);
+}
+
+void CorenumAllocator::free_corenum(const int num) {
+    const std::lock_guard<std::mutex> guard(lock);
+    alloc.free(num, 1);
+}
+
+void CorenumAllocator::set_max_core_count(const std::size_t max) {
+    const std::lock_guard<std::mutex> guard(lock);
+    alloc.set_maximum(max);
+}
+
+bool KernelState::init(MemState &mem, CallImportFunc call_import, CPUBackend cpu_backend, bool cpu_opt) {
+    constexpr std::size_t MAX_CORE_COUNT = 150;
+
+    corenum_allocator.set_max_core_count(MAX_CORE_COUNT);
+    exclusive_monitor = new_exclusive_monitor(MAX_CORE_COUNT);
+    start_tick = { rtc_base_ticks() };
+    base_tick = { rtc_base_ticks() };
+    cpu_protocol = std::make_unique<CPUProtocol>(*this, mem, call_import);
+    debugger.init(this);
+    this->cpu_backend = cpu_backend;
+    this->cpu_opt = cpu_opt;
+    guest_func_runner = create_thread(mem, "guest function runner");
+
     return true;
 }
 
-Ptr<Ptr<void>> get_thread_tls_addr(KernelState &kernel, MemState &mem, SceUID thread_id, int key) {
+void KernelState::set_memory_watch(bool enabled) {
+    std::lock_guard<std::mutex> lock(mutex);
+    for (const auto &thread : threads) {
+        auto &cpu = *thread.second->cpu;
+        if (enabled != get_log_mem(cpu)) {
+            if (enabled)
+                set_log_mem(cpu, true);
+            else
+                set_log_mem(cpu, false);
+        }
+    }
+}
+
+void KernelState::invalidate_jit_cache(Address start, size_t length) {
+    std::lock_guard<std::mutex> lock(mutex);
+    for (auto thread : threads) {
+        ::invalidate_jit_cache(*thread.second->cpu, start, length);
+    }
+}
+
+ThreadStatePtr KernelState::get_thread(SceUID thread_id) {
+    std::lock_guard<std::mutex> lock(mutex);
+    auto it = threads.find(thread_id);
+    if (it == threads.end()) {
+        return nullptr;
+    }
+    return it->second;
+}
+
+Ptr<Ptr<void>> KernelState::get_thread_tls_addr(MemState &mem, SceUID thread_id, int key) {
     Ptr<Ptr<void>> address(0);
     //magic numbers taken from decompiled source. There is 0x400 unused bytes of unknown usage
     if (key <= 0x100 && key >= 0) {
-        const ThreadStatePtr thread = util::find(thread_id, kernel.threads);
+        const ThreadStatePtr thread = util::find(thread_id, threads);
         address = thread->tls.get_ptr<Ptr<void>>() + key;
     } else {
         LOG_ERROR("Wrong tls slot index. TID:{} index:{}", thread_id, key);
@@ -52,45 +103,19 @@ Ptr<Ptr<void>> get_thread_tls_addr(KernelState &kernel, MemState &mem, SceUID th
     return address;
 }
 
-void stop_all_threads(KernelState &kernel) {
-    const std::lock_guard<std::mutex> lock(kernel.mutex);
-    for (ThreadStatePtrs::iterator thread = kernel.threads.begin(); thread != kernel.threads.end(); ++thread) {
-        exit_thread(*thread->second);
+void KernelState::stop_all_threads() {
+    const std::lock_guard<std::mutex> lock(mutex);
+    for (ThreadStatePtrs::iterator thread = threads.begin(); thread != threads.end(); ++thread) {
+        thread->second->exit();
     }
 }
 
-void add_watch_memory_addr(KernelState &state, Address addr, size_t size) {
-    state.watch_memory_addrs.emplace(addr, WatchMemory{ addr, size });
+ThreadStatePtr KernelState::create_thread(MemState &mem, const char *name) {
+    constexpr size_t DEFAULT_STACK_SIZE = 0x1000;
+    const SceUID id = ThreadState::create(Ptr<void>(0), *this, mem, name, SCE_KERNEL_DEFAULT_PRIORITY, DEFAULT_STACK_SIZE, nullptr);
+    return lock_and_find(id, threads, mutex);
 }
 
-void remove_watch_memory_addr(KernelState &state, Address addr) {
-    state.watch_memory_addrs.erase(addr);
-}
-
-// TODO use boost icl or interval tree instead if this turns out to be a significant bottleneck
-Address get_watch_memory_addr(KernelState &state, Address addr) {
-    for (const auto &item : state.watch_memory_addrs) {
-        if (item.second.start <= addr && addr < item.second.start + item.second.size) {
-            return item.second.start;
-        }
-    }
-    return 0;
-}
-
-void update_watches(KernelState &state) {
-    for (const auto &thread : state.threads) {
-        auto &cpu = *thread.second->cpu;
-        if (state.watch_code != get_log_code(cpu)) {
-            if (state.watch_code)
-                set_log_code(cpu, true);
-            else
-                set_log_code(cpu, false);
-        }
-        if (state.watch_memory != get_log_mem(cpu)) {
-            if (state.watch_memory)
-                set_log_mem(cpu, true);
-            else
-                set_log_mem(cpu, false);
-        }
-    }
+int KernelState::run_guest_function(Address callback_address, const std::vector<uint32_t> &args) {
+    return this->guest_func_runner->run_guest_function(callback_address, args);
 }

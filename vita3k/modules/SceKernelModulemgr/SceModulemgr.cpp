@@ -19,7 +19,7 @@
 #include <host/load_self.h>
 #include <io/functions.h>
 #include <kernel/state.h>
-#include <kernel/thread/thread_functions.h>
+
 #include <modules/module_parent.h>
 #include <util/lock_and_find.h>
 
@@ -102,19 +102,14 @@ EXPORT(SceUID, _sceKernelLoadStartModule, const char *moduleFileName, SceSize ar
     if (!load_module(mod_id, entry_point, module, host, export_name, moduleFileName, error_val))
         return error_val;
 
-    const SceUID thid = create_thread(entry_point.cast<const void>(), host.kernel, host.mem, module->module_name, SCE_KERNEL_DEFAULT_PRIORITY_USER,
-        static_cast<int>(SCE_KERNEL_STACK_SIZE_USER_DEFAULT), nullptr);
-
-    const ThreadStatePtr thread = lock_and_find(thid, host.kernel.threads, host.kernel.mutex);
-
-    uint32_t result = run_on_current(*thread, entry_point, args, argp);
+    auto module_thread = host.kernel.create_thread(host.mem, moduleFileName);
+    uint32_t result = module_thread->run_guest_function(entry_point.address(), { args, argp.address() });
+    module_thread->exit();
 
     LOG_INFO("Module {} (at \"{}\") module_start returned {}", module->module_name, module->path, log_hex(result));
 
     if (pRes)
         *pRes = result;
-
-    delete_thread(host.kernel, *thread);
 
     return mod_id;
 }

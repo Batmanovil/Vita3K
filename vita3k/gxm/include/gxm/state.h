@@ -3,6 +3,8 @@
 #include <mem/ptr.h>
 #include <threads/queue.h>
 
+#include <mutex>
+
 typedef void SceGxmDisplayQueueCallback(Ptr<const void> callbackData);
 
 struct SceGxmInitializeParams {
@@ -22,8 +24,8 @@ struct DisplayCallback {
 
 struct GxmState {
     SceGxmInitializeParams params;
-    bool is_in_scene = false;
     Queue<DisplayCallback> display_queue;
     Ptr<uint32_t> notification_region;
     SceUID display_queue_thread;
+    std::mutex callback_lock;
 };

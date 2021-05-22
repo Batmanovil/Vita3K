@@ -19,18 +19,24 @@
 
 #include <cassert>
 #include <cstdint>
+#include <functional>
 #include <vector>
 
-struct GxmContextState;
+#include <dlmalloc.h>
 
 namespace renderer {
 #define REPORT_MISSING(backend) //LOG_ERROR("Unimplemented graphics API handler with backend {}", (int)backend)
 #define REPORT_STUBBED() //LOG_INFO("Stubbed")
 
+struct Command;
+
+using CommandAllocFunc = std::function<Command *()>;
+using CommandFreeFunc = std::function<void(Command *)>;
+
 struct Context;
 struct State;
 
-enum class CommandOpcode : std::uint16_t {
+enum class CommandOpcode : std::uint8_t {
     // These two functions are sync, and taking pointer as parameter.
     CreateContext = 0,
     CreateRenderTarget = 1,
@@ -54,21 +60,13 @@ enum class CommandOpcode : std::uint16_t {
     SyncSurfaceData = 6,
 
     /**
-         * Jump to another command pointer, save current command pointer on a stack
-         */
-    JumpWithLink = 7,
-
-    /**
-         * Pop the stack, and jump the command popped
-         */
-    JumpBack = 8,
-
-    /**
          * Signal sync object that fragment has been done.
          */
     SignalSyncObject = 9,
 
-    DestroyRenderTarget = 10
+    SignalNotification = 10,
+
+    DestroyRenderTarget = 11
 };
 
 enum CommandErrorCode {
@@ -77,25 +75,31 @@ enum CommandErrorCode {
     CommandErrorArgumentsTooLarge = -2
 };
 
-constexpr std::size_t MAX_COMMAND_DATA_SIZE = 0x40;
+constexpr std::size_t MAX_COMMAND_DATA_SIZE = 0x20;
 
 struct Command {
+    enum {
+        FLAG_FROM_HOST = 1 << 0,
+        FLAG_NO_FREE = 1 << 1
+    };
+
     CommandOpcode opcode;
+    std::uint8_t flags = 0;
+
     std::uint8_t data[MAX_COMMAND_DATA_SIZE];
     int *status;
 
-    Command *next;
+    Command *next = nullptr;
 };
 
 using CommandPool = std::vector<Command>;
 
-// This somehow looks like vulkan
 // It's to split a command list easier when ExecuteCommandList is used.
 struct CommandList {
     Command *first{ nullptr };
     Command *last{ nullptr };
+
     Context *context; ///< The HLE context that try to execute this buffer.
-    GxmContextState *gxm_context; ///< The GXM context associated.
 };
 
 struct CommandHelper {
@@ -151,8 +155,9 @@ bool do_command_push_data(CommandHelper &helper, Head arg1, Args... args2) {
 }
 
 template <typename... Args>
-Command *make_command(const CommandOpcode opcode, int *status, Args... arguments) {
-    Command *new_command = new Command;
+Command *make_command(CommandAllocFunc alloc_func, CommandFreeFunc free_func, const CommandOpcode opcode, int *status, Args... arguments) {
+    Command *new_command = alloc_func();
+
     new_command->opcode = opcode;
     new_command->status = status;
     new_command->next = nullptr;
@@ -161,7 +166,7 @@ Command *make_command(const CommandOpcode opcode, int *status, Args... arguments
 
     if constexpr (sizeof...(arguments) > 0) {
         if (!do_command_push_data(helper, arguments...)) {
-            delete new_command;
+            free_func(new_command);
             return nullptr;
         }
     }

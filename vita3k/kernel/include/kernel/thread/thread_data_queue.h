@@ -15,6 +15,8 @@
 // with this program; if not, write to the Free Software Foundation, Inc.,
 // 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
+#pragma once
+
 #include <kernel/thread/thread_state.h>
 #include <list>
 #include <set>
@@ -214,7 +216,7 @@ public:
         return *it;
     }
 
-    typename std::multiset<T, std::greater<T>>::iterator it;
+    typename std::multiset<T>::iterator it;
 };
 
 template <typename T>
@@ -271,5 +273,5 @@ private:
         return ThreadDataQueueInterator<T>(base);
     }
 
-    std::multiset<T, std::greater<T>> c;
+    std::multiset<T> c;
 };

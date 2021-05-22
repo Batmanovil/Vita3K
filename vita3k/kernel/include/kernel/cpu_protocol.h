@@ -18,22 +18,21 @@
 #pragma once
 
 #include <cpu/common.h>
-#include <kernel/types.h>
-#include <util/types.h>
 
-template <class T>
-class Ptr;
 struct KernelState;
-struct MemState;
-struct CPUState;
 
-Ptr<Ptr<void>> get_thread_tls_addr(KernelState &kernel, MemState &mem, SceUID thread_id, int key);
-void stop_all_threads(KernelState &kernel);
+typedef std::function<void(CPUState &cpu, uint32_t nid, SceUID thread_id)> CallImportFunc;
 
-void add_watch_memory_addr(KernelState &state, Address addr, size_t size);
-void remove_watch_memory_addr(KernelState &state, Address addr);
-Address get_watch_memory_addr(KernelState &state, Address addr);
+struct CPUProtocol : public CPUProtocolBase {
+    CPUProtocol(KernelState &kernel, MemState &mem, const CallImportFunc &func);
+    ~CPUProtocol();
+    void call_svc(CPUState &cpu, uint32_t svc, Address pc, SceUID thread_id) override;
+    Address get_watch_memory_addr(Address addr) override;
+    std::vector<ModuleRegion> &get_module_regions() override;
+    ExclusiveMonitorPtr get_exlusive_monitor() override;
 
-void update_watches(KernelState &state);
-
-bool init(KernelState &state, MemState &mem, int cpu_pool_size, CPUProtocolBase *cpu_protocol, CPUBackend cpu_backend);
+private:
+    CallImportFunc call_import;
+    KernelState *kernel;
+    MemState *mem;
+};

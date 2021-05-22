@@ -78,22 +78,11 @@ void UnicornCPU::intr_hook(uc_engine *uc, uint32_t intno, void *user_data) {
         uint32_t svc_instruction = 0;
         const auto err = uc_mem_read(uc, svc_address, &svc_instruction, sizeof(svc_instruction));
         assert(err == UC_ERR_OK);
-        const uint32_t imm = svc_instruction & 0xffffff;
+        const uint32_t imm = state.is_thumb_mode() ? (svc_instruction & 0xff0000) >> 16 : svc_instruction & 0xffffff;
         state.parent->protocol->call_svc(*state.parent, imm, pc, get_thread_id(*state.parent));
     } else if (intno == INT_BKPT) {
-        auto &bks = state.parent->mem->breakpoints;
-        if (bks.find(pc) != bks.end()) {
-            auto bk = bks[pc];
-            state.stop();
-            if (bk.gdb) {
-                state.did_break = true;
-            } else {
-                state.did_inject = true;
-                if (bk.callback) {
-                    bk.callback(*state.parent, *state.parent->mem);
-                }
-            }
-        }
+        state.stop();
+        state.did_break = true;
     }
     state.is_inside_intr_hook = false;
 }
@@ -131,35 +120,6 @@ void UnicornCPU::log_error_details(uc_err code) {
     }
     LOG_ERROR("r12: 0x{:0>8x}", registers[12]);
     LOG_ERROR("Executing: {}", disassemble(*this->parent, pc));
-}
-
-int UnicornCPU::run_after_injected(uint32_t pc, bool thumb_mode) {
-    // run the original instruction before injecting bkpt
-    // then, inject the bkpt again
-
-    assert(parent->mem->breakpoints.find(pc) != parent->mem->breakpoints.end());
-
-    unsigned char original[4];
-    auto bk = parent->mem->breakpoints[pc];
-
-    size_t size = thumb_mode ? sizeof(unsigned char[2]) : sizeof(unsigned char[4]);
-
-    std::memcpy(original, &parent->mem->memory[pc], size);
-    std::memcpy(&parent->mem->memory[pc], bk.data, size);
-
-    uc_err err;
-    if (thumb_mode) {
-        err = uc_emu_start(uc.get(), pc | 1, 0, 0, 1);
-    } else {
-        err = uc_emu_start(uc.get(), pc, 0, 0, 1);
-    }
-
-    std::memcpy(&parent->mem->memory[pc], original, size);
-    if (err != UC_ERR_OK) {
-        log_error_details(err);
-        return -1;
-    }
-    return 0;
 }
 
 UnicornCPU::UnicornCPU(CPUState *state, Address pc, Address sp)
@@ -214,10 +174,6 @@ int UnicornCPU::run() {
     uint32_t pc = get_pc();
     bool thumb_mode = is_thumb_mode();
     did_break = false;
-    if (did_inject && run_after_injected(pc, thumb_mode)) {
-        return -1;
-    }
-    did_inject = false;
 
     pc = get_pc();
     if (thumb_mode) {
@@ -244,10 +200,6 @@ int UnicornCPU::step() {
     bool thumb_mode = is_thumb_mode();
 
     did_break = false;
-    if (did_inject && run_after_injected(pc, thumb_mode)) {
-        return -1;
-    }
-    did_inject = false;
 
     pc = get_pc();
     if (thumb_mode) {
@@ -396,32 +348,34 @@ bool UnicornCPU::is_thumb_mode() {
 
 CPUContext UnicornCPU::save_context() {
     CPUContext ctx = {};
-    for (auto i = 0; i < 16; i++) {
+    for (size_t i = 0; i < 16; i++) {
         ctx.cpu_registers[i] = get_reg(i);
     }
     ctx.cpu_registers[13] = get_sp();
     ctx.cpu_registers[14] = get_lr();
     ctx.cpu_registers[15] = get_pc();
-    /*
-    for (auto i = 0; i < ctx.fpu_registers.size(); i++) {
+
+    for (size_t i = 0; i < ctx.fpu_registers.size(); i++) {
         ctx.fpu_registers[i] = get_float_reg(i);
     }
 
-    ctx.cpsr = get_cpsr();
-    ctx.fpscr = get_fpscr();*/
+    // Unicorn doesn't like tweaking cpsr
+    // ctx.cpsr = get_cpsr();
+    // ctx.fpscr = get_fpscr();
 
     return ctx;
 }
 
 void UnicornCPU::load_context(CPUContext ctx) {
-    /*for (auto i = 0; i < ctx.fpu_registers.size(); i++) {
+    for (size_t i = 0; i < ctx.fpu_registers.size(); i++) {
         set_float_reg(i, ctx.fpu_registers[i]);
     }
 
-    set_fpscr(ctx.fpscr);
-    set_cpsr(ctx.cpsr);*/
+    // Unicorn doesn't like tweaking cpsr
+    // set_cpsr(ctx.cpsr);
+    // set_fpscr(ctx.fpscr);
 
-    for (auto i = 0; i < 16; i++) {
+    for (size_t i = 0; i < 16; i++) {
         set_reg(i, ctx.cpu_registers[i]);
     }
     set_sp(ctx.cpu_registers[13]);

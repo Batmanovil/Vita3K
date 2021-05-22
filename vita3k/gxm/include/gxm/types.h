@@ -1034,7 +1034,9 @@ enum SceGxmErrorCode {
     SCE_GXM_ERROR_INVALID_PRECOMPUTED_DRAW = 0x805B0014,
     SCE_GXM_ERROR_INVALID_PRECOMPUTED_VERTEX_STATE = 0x805B0015,
     SCE_GXM_ERROR_INVALID_PRECOMPUTED_FRAGMENT_STATE = 0x805B0016,
-    SCE_GXM_ERROR_DRIVER = 0x805B0017
+    SCE_GXM_ERROR_DRIVER = 0x805B0017,
+    SCE_GXM_ERROR_WITHIN_COMMAND_LIST = 0x805B002C,
+    SCE_GXM_ERROR_NOT_WITHIN_COMMAND_LIST = 0x805B002D
 };
 
 enum SceGxmIndexSource {
@@ -1080,10 +1082,25 @@ struct SceGxmTexture {
     uint32_t unk2 : 2;
     uint32_t format0 : 1;
     // Control Word 1
-    uint32_t height : 12;
-    uint32_t width : 12;
-    uint32_t base_format : 5;
-    uint32_t type : 3;
+    union {
+        struct {
+            uint32_t height : 12;
+            uint32_t width : 12;
+        };
+
+        struct {
+            uint32_t height_base2 : 4;
+            uint32_t unknown1 : 12;
+            uint32_t width_base2 : 4;
+            uint32_t unknown2 : 4;
+        };
+
+        struct {
+            uint32_t whblock : 24;
+            uint32_t base_format : 5;
+            uint32_t type : 3;
+        };
+    };
     // Control Word 2
     uint32_t lod_min0 : 2;
     uint32_t data_addr : 30;
@@ -1097,6 +1114,8 @@ struct SceGxmTexture {
         return type << 29;
     }
 };
+
+static_assert(sizeof(SceGxmTexture) == 16);
 
 struct SceGxmColorSurface {
     // opaque start
@@ -1155,9 +1174,9 @@ typedef void *(*SceGxmDeferredContextCallback)(void *userData, uint32_t minSize,
 struct SceGxmDeferredContextParams {
     Ptr<void> hostMem;
     uint32_t hostMemSize;
-    SceGxmDeferredContextCallback vdmCallback;
-    SceGxmDeferredContextCallback vertexCallback;
-    SceGxmDeferredContextCallback fragmentCallback;
+    Ptr<SceGxmDeferredContextCallback> vdmCallback;
+    Ptr<SceGxmDeferredContextCallback> vertexCallback;
+    Ptr<SceGxmDeferredContextCallback> fragmentCallback;
     Ptr<void> userData;
     Ptr<void> vdmBufferMem;
     uint32_t vdmBufferMemSize;
@@ -1200,15 +1219,9 @@ struct SceGxmSyncObject {
     std::condition_variable cond;
 };
 
-struct GXMRecordState {
-    // Programs.
-    Ptr<const SceGxmFragmentProgram> fragment_program;
-    Ptr<const SceGxmVertexProgram> vertex_program;
-};
-
 struct GxmContextState {
     // Constant after initialisation.
-    SceGxmContextParams params;
+    SceGxmContextType type;
 
     // Surfaces.
     SceGxmColorSurface color_surface;
@@ -1228,9 +1241,6 @@ struct GxmContextState {
     Ptr<const SceGxmFragmentProgram> fragment_program;
     Ptr<const SceGxmVertexProgram> vertex_program;
 
-    std::string last_draw_fragment_program_hash;
-    std::string last_draw_vertex_program_hash;
-
     // Uniforms.
     UniformBuffers fragment_uniform_buffers;
     UniformBuffers vertex_uniform_buffers;
@@ -1238,6 +1248,13 @@ struct GxmContextState {
     size_t vertex_ring_buffer_used = 0;
     SceGxmLastReserveStatus fragment_last_reserve_status = SceGxmLastReserveStatus::Available;
     SceGxmLastReserveStatus vertex_last_reserve_status = SceGxmLastReserveStatus::Available;
+
+    Ptr<void> vertex_ring_buffer;
+    uint32_t vertex_ring_buffer_size;
+    Ptr<void> fragment_ring_buffer;
+    uint32_t fragment_ring_buffer_size;
+    Ptr<void> vdm_buffer;
+    uint32_t vdm_buffer_size;
 
     // Vertex streams.
     StreamDatas stream_data;
@@ -1282,6 +1299,14 @@ struct GxmContextState {
     // Precomputed
     Ptr<SceGxmPrecomputedVertexState> precomputed_vertex_state;
     Ptr<SceGxmPrecomputedFragmentState> precomputed_fragment_state;
+
+    // Deferred
+    Ptr<SceGxmDeferredContextCallback> vertex_memory_callback;
+    Ptr<SceGxmDeferredContextCallback> fragment_memory_callback;
+    Ptr<SceGxmDeferredContextCallback> vdm_memory_callback;
+    Ptr<void> memory_callback_userdata;
+
+    bool active = false;
 };
 
 struct SceGxmFragmentProgram {

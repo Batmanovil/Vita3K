@@ -23,7 +23,7 @@
 #include <gui/imgui_impl_sdl.h>
 #include <host/state.h>
 #include <io/functions.h>
-#include <kernel/functions.h>
+
 #include <nids/functions.h>
 #include <renderer/functions.h>
 #include <rtc/rtc.h>
@@ -96,14 +96,12 @@ bool init(HostState &state, Config &cfg, const Root &root_paths) {
     const ResumeAudioThread resume_thread = [&state](SceUID thread_id) {
         const auto thread = lock_and_find(thread_id, state.kernel.threads, state.kernel.mutex);
         const std::lock_guard<std::mutex> lock(thread->mutex);
-        if (thread->to_do == ThreadToDo::wait) {
-            thread->to_do = ThreadToDo::run;
+        if (thread->status == ThreadStatus::wait) {
+            thread->update_status(ThreadStatus::run);
         }
-        thread->something_to_do.notify_all();
     };
 
     state.cfg = std::move(cfg);
-    state.kernel.wait_for_debugger = state.cfg.wait_for_debugger;
 
     state.base_path = root_paths.get_base_path_string();
     state.default_path = root_paths.get_pref_path_string();
@@ -116,8 +114,6 @@ bool init(HostState &state, Config &cfg, const Root &root_paths) {
             state.cfg.pref_path += '/';
         state.pref_path = string_utils::utf_to_wide(state.cfg.pref_path);
     }
-
-    state.kernel.cpu_backend = state.cfg.cpu_backend == "Dynarmic" ? CPUBackend::Dynarmic : CPUBackend::Unicorn;
 
 #ifdef USE_VULKAN
     if (string_utils::toupper(state.cfg.backend_renderer) == "VULKAN")
@@ -161,11 +157,6 @@ bool init(HostState &state, Config &cfg, const Root &root_paths) {
 
     if (!init(state.mem)) {
         LOG_ERROR("Failed to initialize memory for emulator state!");
-        return false;
-    }
-
-    if (!init(state.kernel, state.mem, cfg.cpu_pool_size, state.cpu_protocol.get(), state.kernel.cpu_backend)) {
-        LOG_WARN("Failed to init kernel!");
         return false;
     }
 
