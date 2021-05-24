@@ -32,6 +32,7 @@
 #include <kernel/object_store.h>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <queue>
 #include <unordered_map>
 #include <vector>
@@ -147,13 +148,12 @@ struct KernelState {
 
     ObjectStore obj_store;
 
-    SceRtcTick start_tick;
+    uint64_t start_tick;
     SceRtcTick base_tick;
     TimerStates timers;
     Ptr<uint32_t> process_param;
 
     NotFoundVars not_found_vars;
-    ModuleRegions module_regions;
 
     Debugger debugger;
 
@@ -162,14 +162,17 @@ struct KernelState {
     }
 
     bool init(MemState &mem, CallImportFunc call_import, CPUBackend cpu_backend, bool cpu_opt);
-    void set_memory_watch(bool enabled);
-    void invalidate_jit_cache(Address start, size_t length);
+    ThreadStatePtr create_thread(MemState &mem, const char *name);
     ThreadStatePtr get_thread(SceUID thread_id);
     Ptr<Ptr<void>> get_thread_tls_addr(MemState &mem, SceUID thread_id, int key);
     void stop_all_threads();
-    ThreadStatePtr create_thread(MemState &mem, const char *name);
+
     int run_guest_function(Address callback_address, const std::vector<uint32_t> &args);
 
+    void set_memory_watch(bool enabled);
+    void invalidate_jit_cache(Address start, size_t length);
+    std::shared_ptr<SceKernelModuleInfo> find_module_by_addr(Address address);
+
 private:
-    std::atomic<SceUID> next_uid{ 0 };
+    std::atomic<SceUID> next_uid{ 1 };
 };

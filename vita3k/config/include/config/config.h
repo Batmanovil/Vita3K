@@ -27,7 +27,6 @@
 #define CONFIG_INDIVIDUAL(code)                                                                         \
     code(bool, "log-imports", false, log_imports)                                                       \
     code(bool, "dump-elfs", false, dump_elfs)                                                           \
-    code(bool, "stack-traceback", false, stack_traceback)                                               \
     code(bool, "gdbstub", false, gdbstub)                                                               \
     code(bool, "log-exports", false, log_exports)                                                       \
     code(bool, "log-active-shaders", false, log_active_shaders)                                         \
@@ -49,10 +48,9 @@
     code(int, "delay-start", 10, delay_start)                                                           \
     code(float, "background-alpha", .300f, background_alpha)                                            \
     code(int, "log-level", static_cast<int>(spdlog::level::trace), log_level)                           \
-    code(std::string, "cpu-backend", "Unicorn", cpu_backend)                                            \
+    code(std::string, "cpu-backend", "Dynarmic", cpu_backend)                                           \
     code(bool, "cpu-opt", true, cpu_opt)                                                                \
     code(std::string, "pref-path", std::string{}, pref_path)                                            \
-    code(std::string, "last-app", std::string{}, last_app)                                              \
     code(bool, "discord-rich-presence", true, discord_rich_presence)                                    \
     code(bool, "wait-for-debugger", false, wait_for_debugger)                                           \
     code(bool, "color-surface-debug", false, color_surface_debug)                                       \
@@ -99,7 +97,8 @@
 // When adding in a new macro for generation, ALL options must be stated.
 #define CONFIG_VECTOR(code)                                                                             \
     code(std::vector<std::string>, "lle-modules", std::vector<std::string>{}, lle_modules)              \
-    code(std::vector<uint64_t>, "ime-langs", std::vector<uint64_t>{4}, ime_langs)
+    code(std::vector<uint64_t>, "ime-langs", std::vector<uint64_t>{4}, ime_langs)                       \
+    code(std::vector<std::string>, "last-loaded-apps", std::vector<std::string>{}, last_loaded_apps)                                              
 
 // Parent macro for easier generation
 #define CONFIG_LIST(code)                                                                               \

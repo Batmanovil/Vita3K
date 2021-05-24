@@ -51,7 +51,7 @@ bool KernelState::init(MemState &mem, CallImportFunc call_import, CPUBackend cpu
 
     corenum_allocator.set_max_core_count(MAX_CORE_COUNT);
     exclusive_monitor = new_exclusive_monitor(MAX_CORE_COUNT);
-    start_tick = { rtc_base_ticks() };
+    start_tick = rtc_get_ticks(rtc_base_ticks());
     base_tick = { rtc_base_ticks() };
     cpu_protocol = std::make_unique<CPUProtocol>(*this, mem, call_import);
     debugger.init(this);
@@ -118,4 +118,18 @@ ThreadStatePtr KernelState::create_thread(MemState &mem, const char *name) {
 
 int KernelState::run_guest_function(Address callback_address, const std::vector<uint32_t> &args) {
     return this->guest_func_runner->run_guest_function(callback_address, args);
+}
+
+std::shared_ptr<SceKernelModuleInfo> KernelState::find_module_by_addr(Address address) {
+    const auto lock = std::lock_guard(mutex);
+    for (auto [_, mod] : loaded_modules) {
+        for (auto seg : mod->segments) {
+            if (!seg.size)
+                continue;
+            if (seg.vaddr.address() <= address && address <= seg.vaddr.address() + seg.memsz) {
+                return mod;
+            }
+        }
+    }
+    return nullptr;
 }
